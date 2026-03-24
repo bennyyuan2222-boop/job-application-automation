@@ -48,9 +48,11 @@ In Vercel:
 Add these project env vars:
 
 - `DATABASE_URL` = Neon pooled URL
-- `DIRECT_URL` = Neon direct URL
+- `DATABASE_URL_UNPOOLED` = Neon direct URL
 - `AUTH_ALLOWED_EMAILS` = your real email address
 - `SESSION_SECRET` = a long random secret
+
+Note: if Vercel currently has a typo like `AUTH_ALLOWED_EMAILED`, the app now tolerates that too, but `AUTH_ALLOWED_EMAILS` is still the correct name.
 
 Generate a secret with:
 
@@ -63,9 +65,11 @@ From your machine, in the repo root:
 
 ```bash
 export DATABASE_URL='YOUR_NEON_POOLED_URL'
-export DIRECT_URL='YOUR_NEON_DIRECT_URL'
+export DATABASE_URL_UNPOOLED='YOUR_NEON_DIRECT_URL'
 npm install
 npm run db:migrate:deploy
+
+If Prisma reports `P3005` (`database schema is not empty`), use a fresh empty Neon database or explicitly reset/drop the existing schema before retrying. For a first deployment, a fresh empty database is the safest path.
 ```
 
 ## 6) Optional: seed the hosted preview with demo data

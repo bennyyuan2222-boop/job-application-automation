@@ -10,7 +10,7 @@ type Session = {
 };
 
 function getAllowedEmails() {
-  return (process.env.AUTH_ALLOWED_EMAILS ?? '')
+  return (process.env.AUTH_ALLOWED_EMAILS ?? process.env.AUTH_ALLOWED_EMAILED ?? '')
     .split(',')
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean);

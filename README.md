@@ -76,7 +76,7 @@ The repo now has the minimum deployment helpers for a first hosted preview:
 - Node is pinned to `22.x` via `package.json` and `.nvmrc`
 - Prisma production deploy command exists: `npm run db:migrate:deploy`
 - Prisma generate runs on install via `postinstall`
-- Prisma schema supports both `DATABASE_URL` and `DIRECT_URL`
+- Prisma schema supports Vercel/Neon env names: `DATABASE_URL` and `DATABASE_URL_UNPOOLED`
 - the DB-backed app pages are marked dynamic so a hosted build does not need to pre-render live DB pages during build
 
 For the concrete Vercel + Neon setup checklist, read:
