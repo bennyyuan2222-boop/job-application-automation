@@ -4,6 +4,7 @@ import { runScoutIngestion } from '@job-ops/scout-worker';
 import type { RawScoutJobInput } from '@job-ops/domain';
 
 import { requireRouteSession } from '../../../../../lib/route-auth';
+import { sameOriginUrl } from '../../../../../lib/redirects';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,5 +54,5 @@ export async function GET(request: NextRequest) {
   revalidatePath('/shortlist');
   revalidatePath('/activity');
 
-  return NextResponse.redirect(new URL('/inbox', request.url));
+  return NextResponse.redirect(sameOriginUrl(request, '/inbox'));
 }

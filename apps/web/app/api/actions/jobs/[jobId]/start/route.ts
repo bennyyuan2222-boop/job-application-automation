@@ -5,6 +5,7 @@ import { generateTailoringDraftForApplication } from '@job-ops/needle-worker';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { requireRouteSession } from '../../../../../../lib/route-auth';
+import { sameOriginUrl } from '../../../../../../lib/redirects';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,12 +39,12 @@ export async function GET(
   });
 
   if (!job) {
-    return NextResponse.redirect(new URL('/shortlist', request.url));
+    return NextResponse.redirect(sameOriginUrl(request, '/shortlist'));
   }
 
   const existingApplication = job.applications[0] ?? null;
   if (existingApplication) {
-    return NextResponse.redirect(new URL(applicationRouteForStatus(existingApplication.id, existingApplication.status), request.url));
+    return NextResponse.redirect(sameOriginUrl(request, applicationRouteForStatus(existingApplication.id, existingApplication.status)));
   }
 
   const fallbackBaseResume = await prisma.resumeVersion.findFirst({
@@ -52,7 +53,7 @@ export async function GET(
   });
 
   if (!fallbackBaseResume) {
-    return NextResponse.redirect(new URL('/shortlist', request.url));
+    return NextResponse.redirect(sameOriginUrl(request, '/shortlist'));
   }
 
   const application = await prisma.$transaction(async (tx) => {
@@ -103,5 +104,5 @@ export async function GET(
   revalidatePath(`/tailoring/${application.id}`);
   revalidatePath('/activity');
 
-  return NextResponse.redirect(new URL(`/tailoring/${application.id}`, request.url));
+  return NextResponse.redirect(sameOriginUrl(request, `/tailoring/${application.id}`));
 }

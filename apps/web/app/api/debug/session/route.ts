@@ -15,5 +15,8 @@ export async function GET(request: NextRequest) {
     cookieLength: rawCookie?.length ?? 0,
     decoded: session,
     requestUrl: request.url,
+    requestHost: request.headers.get('host'),
+    forwardedHost: request.headers.get('x-forwarded-host'),
+    forwardedProto: request.headers.get('x-forwarded-proto'),
   });
 }

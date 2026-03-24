@@ -4,6 +4,7 @@ import { makeAuditEvent } from '@job-ops/domain';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { requireRouteSession } from '../../../../../../lib/route-auth';
+import { sameOriginUrl } from '../../../../../../lib/redirects';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,7 +20,7 @@ export async function GET(
   const { jobId } = await params;
   const job = await prisma.job.findUnique({ where: { id: jobId } });
   if (!job) {
-    return NextResponse.redirect(new URL('/shortlist', request.url));
+    return NextResponse.redirect(sameOriginUrl(request, '/shortlist'));
   }
 
   await prisma.$transaction(async (tx) => {
@@ -42,5 +43,5 @@ export async function GET(
   revalidatePath('/shortlist');
   revalidatePath('/activity');
 
-  return NextResponse.redirect(new URL('/shortlist', request.url));
+  return NextResponse.redirect(sameOriginUrl(request, '/shortlist'));
 }

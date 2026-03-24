@@ -3,6 +3,8 @@ import crypto from 'node:crypto';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 
+import { sameOriginUrlFromHeaders } from './redirects';
+
 export const SESSION_COOKIE = 'jobops_session';
 
 export type Session = {
@@ -59,7 +61,7 @@ export async function getSession() {
 export async function requireSession() {
   const session = await getSession();
   if (!session) {
-    redirect('/login');
+    redirect(await sameOriginUrlFromHeaders('/login'));
   }
   return session;
 }

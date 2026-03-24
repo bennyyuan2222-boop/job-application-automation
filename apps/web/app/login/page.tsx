@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { getSession } from '../../lib/auth';
+import { sameOriginUrlFromHeaders } from '../../lib/redirects';
 import { loginAction } from './actions';
 
 export default async function LoginPage({
@@ -11,7 +12,7 @@ export default async function LoginPage({
 }) {
   const session = await getSession();
   if (session) {
-    redirect('/');
+    redirect(await sameOriginUrlFromHeaders('/'));
   }
 
   const resolvedSearchParams = searchParams ? await searchParams : undefined;

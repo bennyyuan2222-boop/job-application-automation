@@ -6,6 +6,7 @@ import { revalidatePath } from 'next/cache';
 import { makeAuditEvent, type RawScoutJobInput } from '@job-ops/domain';
 
 import { requireSession } from '../../../lib/auth';
+import { sameOriginUrlFromHeaders } from '../../../lib/redirects';
 import { generateTailoringDraftForApplication } from '@job-ops/needle-worker';
 import { runScoutIngestion } from '@job-ops/scout-worker';
 
@@ -179,7 +180,7 @@ export async function runSampleScoutPassAction() {
   });
 
   revalidateScoutPaths();
-  redirect('/inbox');
+  redirect(await sameOriginUrlFromHeaders('/inbox'));
 }
 
 export async function runManualScoutIngestionAction(formData: FormData) {
@@ -204,7 +205,7 @@ export async function runManualScoutIngestionAction(formData: FormData) {
   });
 
   revalidateScoutPaths();
-  redirect('/inbox');
+  redirect(await sameOriginUrlFromHeaders('/inbox'));
 }
 
 export async function createApplicationAction(formData: FormData) {
@@ -237,7 +238,7 @@ export async function createApplicationAction(formData: FormData) {
   const existingApplication = job.applications[0] ?? null;
   if (existingApplication) {
     revalidateScoutPaths();
-    redirect(applicationRouteForStatus(existingApplication.id, existingApplication.status));
+    redirect(await sameOriginUrlFromHeaders(applicationRouteForStatus(existingApplication.id, existingApplication.status)));
   }
 
   const fallbackBaseResume = await prisma.resumeVersion.findFirst({
@@ -294,5 +295,5 @@ export async function createApplicationAction(formData: FormData) {
   revalidatePath('/tailoring');
   revalidatePath(`/tailoring/${application.id}`);
   revalidatePath('/activity');
-  redirect(`/tailoring/${application.id}`);
+  redirect(await sameOriginUrlFromHeaders(`/tailoring/${application.id}`));
 }

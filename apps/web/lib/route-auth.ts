@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { decodeSessionToken, SESSION_COOKIE, type Session } from './auth';
+import { sameOriginUrl } from './redirects';
 
 type RouteSessionResult =
   | {
@@ -17,7 +18,7 @@ export async function requireRouteSession(request: NextRequest): Promise<RouteSe
   if (!session) {
     return {
       ok: false,
-      response: NextResponse.redirect(new URL('/login', request.url)),
+      response: NextResponse.redirect(sameOriginUrl(request, '/login')),
     };
   }
 

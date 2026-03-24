@@ -3,6 +3,7 @@ import { pauseTailoringForApplication } from '@job-ops/needle-worker';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { requireRouteSession } from '../../../../../lib/route-auth';
+import { sameOriginUrl } from '../../../../../lib/redirects';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +17,7 @@ export async function GET(request: NextRequest) {
   const reason = request.nextUrl.searchParams.get('reason')?.trim();
 
   if (!applicationId || !reason) {
-    return NextResponse.redirect(new URL('/tailoring', request.url));
+    return NextResponse.redirect(sameOriginUrl(request, '/tailoring'));
   }
 
   await pauseTailoringForApplication(applicationId, reason, {
@@ -28,5 +29,5 @@ export async function GET(request: NextRequest) {
   revalidatePath(`/applications/${applicationId}`);
   revalidatePath('/activity');
 
-  return NextResponse.redirect(new URL(`/tailoring/${applicationId}`, request.url));
+  return NextResponse.redirect(sameOriginUrl(request, `/tailoring/${applicationId}`));
 }

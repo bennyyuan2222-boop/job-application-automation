@@ -10,6 +10,7 @@ import { evaluateApplicationReadiness } from '@job-ops/readiness';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { requireRouteSession } from '../../../../../../lib/route-auth';
+import { sameOriginUrl } from '../../../../../../lib/redirects';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,7 +63,7 @@ export async function GET(
   const target = request.nextUrl.searchParams.get('to');
 
   if (!target) {
-    return NextResponse.redirect(new URL(`/applications/${applicationId}`, request.url));
+    return NextResponse.redirect(sameOriginUrl(request, `/applications/${applicationId}`));
   }
 
   const application = await prisma.application.findUnique({
@@ -76,7 +77,7 @@ export async function GET(
   });
 
   if (!application) {
-    return NextResponse.redirect(new URL('/applying', request.url));
+    return NextResponse.redirect(sameOriginUrl(request, '/applying'));
   }
 
   const readiness = await syncReadiness(applicationId);
@@ -90,7 +91,7 @@ export async function GET(
   switch (target) {
     case 'submit_review':
       if (!readiness.ready) {
-        return NextResponse.redirect(new URL(`/applications/${applicationId}`, request.url));
+        return NextResponse.redirect(sameOriginUrl(request, `/applications/${applicationId}`));
       }
       nextStatus = ApplicationStatus.submit_review;
       eventType = 'application.moved_to_submit_review';
@@ -110,7 +111,7 @@ export async function GET(
       payloadJson = { source: 'manual_confirmation' };
       break;
     default:
-      return NextResponse.redirect(new URL(`/applications/${applicationId}`, request.url));
+      return NextResponse.redirect(sameOriginUrl(request, `/applications/${applicationId}`));
   }
 
   assertApplicationTransition(application.status as DomainApplicationStatus, nextStatus as DomainApplicationStatus);
@@ -156,5 +157,5 @@ export async function GET(
   revalidatePath('/submit-review');
   revalidatePath('/activity');
 
-  return NextResponse.redirect(new URL(`/applications/${applicationId}`, request.url));
+  return NextResponse.redirect(sameOriginUrl(request, `/applications/${applicationId}`));
 }
