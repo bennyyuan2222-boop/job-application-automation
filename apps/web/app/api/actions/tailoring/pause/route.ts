@@ -7,8 +7,10 @@ import { requireRouteSession } from '../../../../../lib/route-auth';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
-  const { session, response } = await requireRouteSession(request);
-  if (response || !session) return response;
+  const auth = await requireRouteSession(request);
+  if (!auth.ok) return auth.response;
+
+  const { session } = auth;
 
   const applicationId = request.nextUrl.searchParams.get('applicationId')?.trim();
   const reason = request.nextUrl.searchParams.get('reason')?.trim();

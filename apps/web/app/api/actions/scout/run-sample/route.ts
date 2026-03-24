@@ -35,8 +35,10 @@ const SAMPLE_SCOUT_RECORDS: RawScoutJobInput[] = [
 ];
 
 export async function GET(request: NextRequest) {
-  const { session, response } = await requireRouteSession(request);
-  if (response || !session) return response;
+  const auth = await requireRouteSession(request);
+  if (!auth.ok) return auth.response;
+
+  const { session } = auth;
 
   await runScoutIngestion({
     sourceKey: 'manual-scout-sample',

@@ -3,9 +3,9 @@ import crypto from 'node:crypto';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 
-const SESSION_COOKIE = 'jobops_session';
+export const SESSION_COOKIE = 'jobops_session';
 
-type Session = {
+export type Session = {
   email: string;
 };
 
@@ -30,7 +30,7 @@ function encode(email: string) {
   return `${payload}.${signature}`;
 }
 
-function decode(token: string | undefined): Session | null {
+export function decodeSessionToken(token: string | undefined): Session | null {
   if (!token) return null;
   const [payload, signature] = token.split('.');
   if (!payload || !signature) return null;
@@ -86,5 +86,4 @@ export async function createSession(email: string) {
 export async function clearSession() {
   const cookieStore = await cookies();
   cookieStore.delete(SESSION_COOKIE);
-}
 }

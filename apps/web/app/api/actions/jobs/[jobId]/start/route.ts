@@ -20,8 +20,10 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ jobId: string }> },
 ) {
-  const { session, response } = await requireRouteSession(request);
-  if (response || !session) return response;
+  const auth = await requireRouteSession(request);
+  if (!auth.ok) return auth.response;
+
+  const { session } = auth;
 
   const { jobId } = await params;
   const job = await prisma.job.findUnique({
