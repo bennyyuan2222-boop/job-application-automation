@@ -3,7 +3,6 @@ import { redirect } from 'next/navigation';
 
 import { getSession } from '../../lib/auth';
 import { sameOriginUrlFromHeaders } from '../../lib/redirects';
-import { loginAction } from './actions';
 
 export default async function LoginPage({
   searchParams,
@@ -35,7 +34,7 @@ export default async function LoginPage({
           </p>
         ) : null}
 
-        <form action={loginAction} className="stack-form">
+        <form action="/auth/login" method="post" className="stack-form">
           <label className="stack-field">
             <span>Email</span>
             <input name="email" type="email" placeholder="benny@example.com" required />

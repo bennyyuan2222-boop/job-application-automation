@@ -18,6 +18,17 @@ function getAllowedEmails() {
     .filter(Boolean);
 }
 
+export function normalizeAndValidateAllowedEmail(email: string) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const allowedEmails = getAllowedEmails();
+
+  if (!allowedEmails.includes(normalizedEmail)) {
+    throw new Error('That email is not allowed for this app.');
+  }
+
+  return normalizedEmail;
+}
+
 function getSecret() {
   return process.env.SESSION_SECRET ?? 'dev-only-change-me';
 }
@@ -26,10 +37,22 @@ function sign(payload: string) {
   return crypto.createHmac('sha256', getSecret()).update(payload).digest('hex');
 }
 
-function encode(email: string) {
+export function encodeSessionToken(email: string) {
   const payload = Buffer.from(JSON.stringify({ email: email.toLowerCase() }), 'utf8').toString('base64url');
   const signature = sign(payload);
   return `${payload}.${signature}`;
+}
+
+export function getSessionCookieOptions() {
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  return {
+    httpOnly: true,
+    sameSite: 'lax' as const,
+    secure: isProduction,
+    path: '/',
+    maxAge: 60 * 60 * 8,
+  };
 }
 
 export function decodeSessionToken(token: string | undefined): Session | null {
@@ -67,22 +90,10 @@ export async function requireSession() {
 }
 
 export async function createSession(email: string) {
-  const normalizedEmail = email.trim().toLowerCase();
-  const allowedEmails = getAllowedEmails();
+  const normalizedEmail = normalizeAndValidateAllowedEmail(email);
 
-  if (!allowedEmails.includes(normalizedEmail)) {
-    throw new Error('That email is not allowed for this app.');
-  }
-
-  const isProduction = process.env.NODE_ENV === 'production';
   const cookieStore = await cookies();
-  cookieStore.set(SESSION_COOKIE, encode(normalizedEmail), {
-    httpOnly: true,
-    sameSite: isProduction ? 'none' : 'lax',
-    secure: isProduction,
-    path: '/',
-    maxAge: 60 * 60 * 8,
-  });
+  cookieStore.set(SESSION_COOKIE, encodeSessionToken(normalizedEmail), getSessionCookieOptions());
 }
 
 export async function clearSession() {
