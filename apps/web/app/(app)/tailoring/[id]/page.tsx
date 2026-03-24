@@ -1,12 +1,6 @@
 import { notFound } from 'next/navigation';
 
 import { getTailoringDetail } from '../../../../lib/queries';
-import {
-  approveDraftAction,
-  generateDraftAction,
-  pauseTailoringAction,
-  requestEditsAction,
-} from '../actions';
 
 function ResumePreview({ title, content }: { title: string; content: string }) {
   return (
@@ -84,16 +78,20 @@ export default async function TailoringDetailPage({ params }: { params: Promise<
         <div className="panel">
           <p className="eyebrow">Review controls</p>
           <div className="stack-blocks">
-            <form action={generateDraftAction} className="stack-form">
+            <form method="get" action="/api/actions/tailoring/generate" className="stack-form">
               <input type="hidden" name="applicationId" value={detail.applicationId} />
               <label className="stack-field">
                 <span>Optional instruction</span>
-                <textarea name="instructions" rows={3} placeholder="Emphasize workflow mapping, stakeholder communication, or leave blank for default regeneration." />
+                <textarea
+                  name="instructions"
+                  rows={3}
+                  placeholder="Emphasize workflow mapping, stakeholder communication, or leave blank for default regeneration."
+                />
               </label>
               <button type="submit">Generate fresh draft</button>
             </form>
 
-            <form action={requestEditsAction} className="stack-form">
+            <form method="get" action="/api/actions/tailoring/request-edits" className="stack-form">
               <input type="hidden" name="applicationId" value={detail.applicationId} />
               <input type="hidden" name="tailoringRunId" value={detail.latestRun?.id ?? ''} />
               <label className="stack-field">
@@ -105,19 +103,25 @@ export default async function TailoringDetailPage({ params }: { params: Promise<
                   placeholder="Ask Needle to tighten or change emphasis without inventing claims."
                 />
               </label>
-              <button type="submit" disabled={!detail.latestRun}>Request edits + regenerate</button>
+              <button type="submit" disabled={!detail.latestRun}>
+                Request edits + regenerate
+              </button>
             </form>
 
             <div className="button-row">
-              <form action={approveDraftAction}>
+              <form method="get" action="/api/actions/tailoring/approve">
                 <input type="hidden" name="applicationId" value={detail.applicationId} />
                 <input type="hidden" name="tailoringRunId" value={detail.latestRun?.id ?? ''} />
-                <button type="submit" disabled={!detail.latestRun}>Approve latest draft</button>
+                <button type="submit" disabled={!detail.latestRun}>
+                  Approve latest draft
+                </button>
               </form>
-              <form action={pauseTailoringAction} className="inline-form">
+              <form method="get" action="/api/actions/tailoring/pause" className="inline-form">
                 <input type="hidden" name="applicationId" value={detail.applicationId} />
                 <input name="reason" required placeholder="Pause reason" />
-                <button type="submit" className="button-link secondary">Pause</button>
+                <button type="submit" className="button-link secondary">
+                  Pause
+                </button>
               </form>
             </div>
           </div>
@@ -151,7 +155,8 @@ export default async function TailoringDetailPage({ params }: { params: Promise<
           <ul className="simple-list compact-list">
             {detail.latestRun.risks.map((risk) => (
               <li key={`${risk.requirement}-${risk.severity}`}>
-                <strong>{risk.requirement}</strong> — {risk.reason} <span className="muted">({risk.severity})</span>
+                <strong>{risk.requirement}</strong> — {risk.reason}{' '}
+                <span className="muted">({risk.severity})</span>
               </li>
             ))}
           </ul>

@@ -1,4 +1,4 @@
-import { archiveJobAction, runManualScoutIngestionAction, runSampleScoutPassAction, shortlistJobAction } from '../jobs/actions';
+import { runManualScoutIngestionAction } from '../jobs/actions';
 import { getInboxJobs } from '../../../lib/queries';
 
 const manualScoutExample = JSON.stringify(
@@ -30,7 +30,7 @@ export default async function InboxPage() {
         <p className="muted">Real Scout-backed jobs from Postgres. Ranked, deduped, and traceable back to source records.</p>
 
         <div className="button-row top-gap">
-          <form action={runSampleScoutPassAction}>
+          <form method="get" action="/api/actions/scout/run-sample">
             <button type="submit">Run sample Scout pass</button>
           </form>
         </div>
@@ -71,7 +71,9 @@ export default async function InboxPage() {
                 <div className="job-card-header">
                   <div>
                     <h2>{job.title}</h2>
-                    <p className="muted">{job.companyName} · {job.locationText}</p>
+                    <p className="muted">
+                      {job.companyName} · {job.locationText}
+                    </p>
                   </div>
                   <div className="badge">Priority {job.priorityScore?.toFixed(1) ?? '—'}</div>
                 </div>
@@ -85,7 +87,11 @@ export default async function InboxPage() {
                       Source: {job.provenance.sourceKey}
                       {job.provenance.sourceUrl ? (
                         <>
-                          {' '}· <a href={job.provenance.sourceUrl} target="_blank" rel="noreferrer" className="linkish">listing</a>
+                          {' '}
+                          ·{' '}
+                          <a href={job.provenance.sourceUrl} target="_blank" rel="noreferrer" className="linkish">
+                            listing
+                          </a>
                         </>
                       ) : null}
                     </div>
@@ -99,7 +105,9 @@ export default async function InboxPage() {
                     <p className="eyebrow">Top reasons</p>
                     <ul className="chip-list">
                       {job.topReasons.map((reason) => (
-                        <li key={reason} className="chip">{reason}</li>
+                        <li key={reason} className="chip">
+                          {reason}
+                        </li>
                       ))}
                     </ul>
                   </div>
@@ -110,20 +118,22 @@ export default async function InboxPage() {
                     <p className="eyebrow">Risks</p>
                     <ul className="chip-list">
                       {job.risks.map((risk) => (
-                        <li key={risk} className="chip subtle">{risk}</li>
+                        <li key={risk} className="chip subtle">
+                          {risk}
+                        </li>
                       ))}
                     </ul>
                   </div>
                 ) : null}
 
                 <div className="button-row">
-                  <form action={shortlistJobAction}>
-                    <input type="hidden" name="jobId" value={job.id} />
+                  <form method="get" action={`/api/actions/jobs/${job.id}/shortlist`}>
                     <button type="submit">Shortlist</button>
                   </form>
-                  <form action={archiveJobAction}>
-                    <input type="hidden" name="jobId" value={job.id} />
-                    <button type="submit" className="button-link secondary">Archive</button>
+                  <form method="get" action={`/api/actions/jobs/${job.id}/archive`}>
+                    <button type="submit" className="button-link secondary">
+                      Archive
+                    </button>
                   </form>
                 </div>
               </li>

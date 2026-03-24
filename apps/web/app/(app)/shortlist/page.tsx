@@ -1,6 +1,5 @@
 import Link from 'next/link';
 
-import { archiveJobAction, createApplicationAction } from '../jobs/actions';
 import { getShortlistedJobs } from '../../../lib/queries';
 
 export default async function ShortlistPage() {
@@ -48,13 +47,11 @@ export default async function ShortlistPage() {
                       Open {job.activeApplication.status.replaceAll('_', ' ')}
                     </Link>
                   ) : (
-                    <form action={createApplicationAction}>
-                      <input type="hidden" name="jobId" value={job.id} />
+                    <form method="get" action={`/api/actions/jobs/${job.id}/start`}>
                       <button type="submit">Start application</button>
                     </form>
                   )}
-                  <form action={archiveJobAction}>
-                    <input type="hidden" name="jobId" value={job.id} />
+                  <form method="get" action={`/api/actions/jobs/${job.id}/archive`}>
                     <button type="submit" className="button-link secondary">Archive</button>
                   </form>
                 </div>

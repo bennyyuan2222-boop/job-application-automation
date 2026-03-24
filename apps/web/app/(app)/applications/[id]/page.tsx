@@ -3,15 +3,9 @@ import { notFound } from 'next/navigation';
 
 import { getApplicationDetail } from '../../../../lib/queries';
 
+import { addApplicationAttachment, saveApplicationAnswer, savePortalSession } from './actions';
+
 export const dynamic = 'force-dynamic';
-import {
-  addApplicationAttachment,
-  markApplicationSubmitted,
-  moveApplicationBackToApplying,
-  moveApplicationToSubmitReview,
-  saveApplicationAnswer,
-  savePortalSession,
-} from './actions';
 
 function renderValue(value: unknown) {
   if (value == null || value === '') {
@@ -366,8 +360,8 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
       <section className="panel">
         <div className="button-row">
           {application.status === 'applying' ? (
-            <form action={moveApplicationToSubmitReview}>
-              <input type="hidden" name="applicationId" value={application.id} />
+            <form method="get" action={`/api/actions/applications/${application.id}/status`}>
+              <input type="hidden" name="to" value="submit_review" />
               <button type="submit" disabled={!readiness.ready}>
                 Move to submit review
               </button>
@@ -376,12 +370,12 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
 
           {application.status === 'submit_review' ? (
             <>
-              <form action={markApplicationSubmitted}>
-                <input type="hidden" name="applicationId" value={application.id} />
+              <form method="get" action={`/api/actions/applications/${application.id}/status`}>
+                <input type="hidden" name="to" value="submitted" />
                 <button type="submit">Mark submitted</button>
               </form>
-              <form action={moveApplicationBackToApplying}>
-                <input type="hidden" name="applicationId" value={application.id} />
+              <form method="get" action={`/api/actions/applications/${application.id}/status`}>
+                <input type="hidden" name="to" value="applying" />
                 <button type="submit" className="button-link secondary">
                   Return to applying
                 </button>
