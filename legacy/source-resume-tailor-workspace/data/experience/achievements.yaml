@@ -1,0 +1,177 @@
+achievements:
+  - id: ach_odun_dataset_consolidation
+    role_id: role_odun_data_research_intern
+    canonical_text: Consolidated multi-source market and customer data into a structured dataset for repeatable analysis and reporting.
+    evidence_strength: verified
+    tags: [market-research, data-prep, reporting]
+    technologies: [Excel, Python]
+    domains: [market research]
+    usable_in: [analytics, business_analyst, product_strategy]
+  - id: ach_odun_tam_model
+    role_id: role_odun_data_research_intern
+    canonical_text: Built a bottom-up / parameterized TAM and demand model to support GTM planning and investment memos.
+    evidence_strength: verified
+    tags: [tam, market-sizing, strategy, gtm]
+    technologies: [Excel]
+    domains: [go-to-market, strategy]
+    usable_in: [business_analyst, product_strategy]
+  - id: ach_odun_penetration_analysis
+    role_id: role_odun_data_research_intern
+    canonical_text: Produced regional penetration analyses and heat maps to prioritize expansion regions and resource allocation.
+    evidence_strength: verified
+    tags: [geo-analysis, market-expansion, reporting]
+    technologies: [Excel]
+    domains: [strategy]
+    usable_in: [analytics, business_analyst, product_strategy]
+  - id: ach_odun_unit_economics
+    role_id: role_odun_data_research_intern
+    canonical_text: Analyzed business health and unit economics metrics including margins, operating margin, and inventory turnover to support decision-making.
+    evidence_strength: supported
+    tags: [unit-economics, finance, due-diligence]
+    technologies: [Excel]
+    domains: [finance, strategy]
+    usable_in: [business_analyst, product_strategy]
+  - id: ach_odun_competitive_research
+    role_id: role_odun_data_research_intern
+    canonical_text: Conducted competitive intelligence and customer research using public sources, surveys, and interviews to identify adoption and pricing drivers.
+    evidence_strength: verified
+    tags: [competitive-intelligence, customer-research, pricing]
+    technologies: []
+    domains: [market research, strategy]
+    usable_in: [business_analyst, product_strategy]
+  - id: ach_odun_exec_readouts
+    role_id: role_odun_data_research_intern
+    canonical_text: Delivered executive-style readouts connecting analysis to pricing, positioning, rollout sequencing, and growth hypotheses.
+    evidence_strength: supported
+    tags: [stakeholder-communication, strategy]
+    technologies: []
+    domains: [strategy]
+    usable_in: [business_analyst, product_strategy]
+  - id: ach_kalodata_retention_cohorts
+    role_id: role_kalodata_data_science_intern
+    canonical_text: Built geo-based retention cohorts for US and China users to diagnose adoption differences and retention gaps.
+    evidence_strength: verified
+    tags: [retention, cohorts, user-behavior]
+    technologies: [SQL, Python]
+    domains: [product analytics]
+    usable_in: [analytics, business_analyst]
+  - id: ach_kalodata_segmentation
+    role_id: role_kalodata_data_science_intern
+    canonical_text: Segmented cohorts by customer persona and workflow to identify advanced filter adoption as a behavioral driver of churn in China.
+    evidence_strength: verified
+    tags: [segmentation, churn, feature-adoption]
+    technologies: [SQL, Python]
+    domains: [product analytics]
+    usable_in: [analytics, business_analyst]
+  - id: ach_kalodata_kpi_reporting
+    role_id: role_kalodata_data_science_intern
+    canonical_text: Defined D1/D7 retention and feature-adoption KPIs and built recurring monitoring dashboards for stakeholder visibility.
+    evidence_strength: verified
+    tags: [kpi, dashboards, reporting]
+    technologies: [SQL, Tableau, Power BI, Looker]
+    domains: [analytics]
+    usable_in: [analytics, business_analyst]
+  - id: ach_kalodata_product_partner
+    role_id: role_kalodata_data_science_intern
+    canonical_text: Partnered with Product to reframe technical advanced-filter parameters into outcome-oriented labels and clearer product-page language.
+    evidence_strength: verified
+    tags: [product, ux, cross-functional]
+    technologies: []
+    domains: [product analytics]
+    usable_in: [business_analyst, product_strategy]
+  - id: ach_kalodata_retention_lift
+    role_id: role_kalodata_data_science_intern
+    canonical_text: Contributed to a +3% improvement in China D1 retention after advanced filtering UX changes.
+    evidence_strength: verified
+    tags: [impact, retention, experimentation]
+    technologies: []
+    domains: [product analytics]
+    usable_in: [analytics, business_analyst]
+  - id: ach_revops_ingestion
+    project_id: project_revenue_ops_analytics
+    canonical_text: Implemented scheduled ingestion from Stripe and HubSpot APIs into raw and staging layers with reproducible transforms.
+    evidence_strength: verified
+    tags: [elt, apis, ingestion]
+    technologies: [SQL, Python, Stripe API, HubSpot API]
+    domains: [revenue operations]
+    usable_in: [analytics]
+  - id: ach_revops_entity_resolution
+    project_id: project_revenue_ops_analytics
+    canonical_text: Built a canonical account/entity mapping layer across CRM and billing systems to support reliable joins and funnel analysis.
+    evidence_strength: verified
+    tags: [data-modeling, identity-resolution, revenue-ops]
+    technologies: [SQL]
+    domains: [revenue operations]
+    usable_in: [analytics, business_analyst]
+  - id: ach_revops_kpi_marts
+    project_id: project_revenue_ops_analytics
+    canonical_text: Modeled KPI-ready marts for MRR, churn, retention, activation, pipeline conversion, and time-to-close.
+    evidence_strength: verified
+    tags: [kpi, marts, revenue]
+    technologies: [SQL]
+    domains: [revenue operations, analytics]
+    usable_in: [analytics, business_analyst]
+  - id: ach_revops_churn_logic
+    project_id: project_revenue_ops_analytics
+    canonical_text: Distinguished involuntary and voluntary churn to support targeted operational follow-up and reporting.
+    evidence_strength: verified
+    tags: [churn, retention, operations]
+    technologies: [SQL]
+    domains: [revenue operations]
+    usable_in: [analytics, business_analyst]
+  - id: ach_rmp_data_prep
+    project_id: project_rate_my_professor_bias
+    canonical_text: Standardized and cleaned a 70K+ record dataset and documented assumptions for repeatable analysis.
+    evidence_strength: verified
+    tags: [data-cleaning, methodology]
+    technologies: [Python]
+    domains: [statistical analysis]
+    usable_in: [analytics]
+  - id: ach_rmp_testing
+    project_id: project_rate_my_professor_bias
+    canonical_text: Applied non-parametric tests and regression/PCA methods to evaluate rating drivers and potential bias.
+    evidence_strength: verified
+    tags: [statistics, regression, pca]
+    technologies: [Python]
+    domains: [statistical analysis]
+    usable_in: [analytics]
+  - id: ach_rmp_r2
+    project_id: project_rate_my_professor_bias
+    canonical_text: Built regression models with PCA and achieved R² = 0.72.
+    evidence_strength: verified
+    tags: [modeling, pca, regression]
+    technologies: [Python]
+    domains: [statistical analysis]
+    usable_in: [analytics]
+  - id: ach_cssa_team_lead
+    role_id: role_cssa_head_career_community
+    canonical_text: Led a 15-member team delivering networking and career events for 200+ attendees.
+    evidence_strength: verified
+    tags: [leadership, events, community]
+    technologies: []
+    domains: [community, operations]
+    usable_in: [business_analyst, product_strategy]
+  - id: ach_cssa_partnerships
+    role_id: role_cssa_head_career_community
+    canonical_text: Negotiated partnerships to secure $8,000 in ticket sales and sponsorship.
+    evidence_strength: verified
+    tags: [partnerships, sponsorship, negotiation]
+    technologies: []
+    domains: [operations, partnerships]
+    usable_in: [business_analyst, product_strategy]
+  - id: ach_cssa_amazon_tour
+    role_id: role_cssa_head_career_community
+    canonical_text: Organized an Amazon company tour and hosted 80+ students.
+    evidence_strength: verified
+    tags: [events, coordination]
+    technologies: []
+    domains: [community]
+    usable_in: [business_analyst, product_strategy]
+  - id: ach_cssa_excel_tracking
+    role_id: role_cssa_head_career_community
+    canonical_text: Set outreach targets and tracked sub-team performance in Excel to improve execution and growth.
+    evidence_strength: verified
+    tags: [operations, excel, tracking]
+    technologies: [Excel]
+    domains: [operations]
+    usable_in: [business_analyst]

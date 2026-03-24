@@ -1,0 +1,11 @@
+{
+  "name": "@job-ops/domain",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "tsx --test src/**/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

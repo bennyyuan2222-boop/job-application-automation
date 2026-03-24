@@ -1,0 +1,350 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum JobStatus {
+  discovered
+  shortlisted
+  archived
+}
+
+enum WorkMode {
+  remote
+  hybrid
+  onsite
+  unknown
+}
+
+enum ResumeVersionKind {
+  base
+  tailored
+}
+
+enum ResumeCreatedByType {
+  manual
+  agent
+  system
+}
+
+enum ApplicationStatus {
+  tailoring
+  tailoring_review
+  paused
+  applying
+  submit_review
+  submitted
+  archived
+}
+
+enum AnswerSourceType {
+  manual
+  agent
+  resume
+  derived
+}
+
+enum AnswerReviewState {
+  accepted
+  needs_review
+  blocked
+}
+
+enum AttachmentType {
+  resume
+  other
+}
+
+enum PortalSessionMode {
+  manual
+  automation
+  hybrid
+}
+
+enum PortalSessionStatus {
+  not_started
+  in_progress
+  ready_for_review
+  submitted
+  abandoned
+}
+
+enum ActorType {
+  user
+  agent
+  system
+}
+
+enum ScrapeRunStatus {
+  created
+  completed
+  failed
+}
+
+enum JobSourceRecordStatus {
+  captured
+  normalized
+  deduped
+  rejected
+}
+
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  role        String   @default("owner")
+  createdAt   DateTime @default(now())
+  lastLoginAt DateTime?
+}
+
+model Company {
+  id             String          @id @default(cuid())
+  name           String
+  normalizedName String          @unique
+  website        String?
+  linkedinUrl    String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  profile        CompanyProfile?
+  jobs           Job[]
+}
+
+model CompanyProfile {
+  companyId         String   @id
+  company           Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  aiNativeScore     Int?
+  brandValueScore   Int?
+  growthSignalScore Int?
+  qualitySummary    String?
+  signalsJson       Json?
+  lastEnrichedAt    DateTime?
+}
+
+model Job {
+  id                  String          @id @default(cuid())
+  companyId           String
+  company             Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  title               String
+  normalizedTitle     String
+  locationText        String
+  workMode            WorkMode        @default(unknown)
+  employmentType      String?
+  salaryText          String?
+  salaryMin           Int?
+  salaryMax           Int?
+  jobUrl              String
+  jobDescriptionRaw   String
+  jobDescriptionClean String?
+  jobRequirementsJson Json?
+  firstSeenAt         DateTime        @default(now())
+  lastSeenAt          DateTime        @default(now())
+  status              JobStatus       @default(discovered)
+  duplicateOfJobId    String?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  scorecards          JobScorecard[]
+  applications        Application[]
+  sourceLinks         JobSourceLink[]
+  notes               JobNote[]
+}
+
+model JobScorecard {
+  id                  String   @id @default(cuid())
+  jobId               String
+  job                 Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  fitScore            Float
+  companyQualityScore Float
+  aiRelevanceScore    Float
+  freshnessScore      Float
+  priorityScore       Float
+  topReasonsJson      Json?
+  risksJson           Json?
+  rationale           String?
+  scorerType          String   @default("system")
+  scoredAt            DateTime @default(now())
+}
+
+model ScrapeRun {
+  id             String          @id @default(cuid())
+  sourceKey      String
+  searchTerm     String?
+  searchLocation String?
+  status         ScrapeRunStatus @default(created)
+  queryJson      Json?
+  resultCount    Int             @default(0)
+  dedupedCount   Int             @default(0)
+  createdJobCount Int            @default(0)
+  notes          String?
+  startedAt      DateTime        @default(now())
+  completedAt    DateTime?
+  sourceRecords  JobSourceRecord[]
+}
+
+model JobSourceRecord {
+  id                 String                @id @default(cuid())
+  scrapeRunId        String
+  scrapeRun          ScrapeRun             @relation(fields: [scrapeRunId], references: [id], onDelete: Cascade)
+  sourceKey          String
+  sourceRecordId     String?
+  sourceUrl          String?
+  sourceCompanyName  String?
+  sourceTitle        String?
+  sourceLocationText String?
+  status             JobSourceRecordStatus @default(captured)
+  rawPayload         Json
+  normalizedPayload  Json?
+  capturedAt         DateTime              @default(now())
+  linkedJobs         JobSourceLink[]
+
+  @@index([scrapeRunId, capturedAt])
+  @@index([sourceKey, sourceRecordId])
+}
+
+model JobSourceLink {
+  id             String          @id @default(cuid())
+  jobId          String
+  job            Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  sourceRecordId String
+  sourceRecord   JobSourceRecord @relation(fields: [sourceRecordId], references: [id], onDelete: Cascade)
+  matchType      String
+  isPrimary      Boolean         @default(false)
+  createdAt      DateTime        @default(now())
+
+  @@unique([jobId, sourceRecordId])
+  @@index([sourceRecordId])
+}
+
+model JobNote {
+  id          String    @id @default(cuid())
+  jobId       String
+  job         Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  authorType  ActorType @default(agent)
+  authorLabel String
+  body        String
+  createdAt   DateTime  @default(now())
+}
+
+model ResumeVersion {
+  id                    String                @id @default(cuid())
+  kind                  ResumeVersionKind
+  parentResumeVersionId String?
+  parentResumeVersion   ResumeVersion?        @relation("ResumeVersionLineage", fields: [parentResumeVersionId], references: [id])
+  childResumeVersions   ResumeVersion[]       @relation("ResumeVersionLineage")
+  title                 String
+  contentMarkdown       String
+  sectionsJson          Json?
+  renderedPdfUrl        String?
+  renderedDocxUrl       String?
+  changeSummaryJson     Json?
+  createdByType         ResumeCreatedByType   @default(agent)
+  createdAt             DateTime              @default(now())
+  baseApplications      Application[]         @relation("BaseResumeVersion")
+  tailoredApplications  Application[]         @relation("TailoredResumeVersion")
+  inputTailoringRuns    TailoringRun[]        @relation("InputResumeVersion")
+  outputTailoringRuns   TailoringRun[]        @relation("OutputResumeVersion")
+  attachments           ApplicationAttachment[]
+}
+
+model Application {
+  id                     String                @id @default(cuid())
+  jobId                  String
+  job                    Job                   @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  status                 ApplicationStatus     @default(tailoring)
+  baseResumeVersionId    String
+  baseResumeVersion      ResumeVersion         @relation("BaseResumeVersion", fields: [baseResumeVersionId], references: [id])
+  tailoredResumeVersionId String?
+  tailoredResumeVersion  ResumeVersion?        @relation("TailoredResumeVersion", fields: [tailoredResumeVersionId], references: [id])
+  portalUrl              String?
+  portalDomain           String?
+  completionPercent      Int                   @default(0)
+  missingRequiredCount   Int                   @default(0)
+  lowConfidenceCount     Int                   @default(0)
+  pausedReason           String?
+  submittedAt            DateTime?
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
+  tailoringRuns          TailoringRun[]
+  answers                ApplicationAnswer[]
+  attachments            ApplicationAttachment[]
+  portalSessions         PortalSession[]
+}
+
+model TailoringRun {
+  id                    String         @id @default(cuid())
+  applicationId         String
+  application           Application    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  inputResumeVersionId  String
+  inputResumeVersion    ResumeVersion  @relation("InputResumeVersion", fields: [inputResumeVersionId], references: [id])
+  outputResumeVersionId String?
+  outputResumeVersion   ResumeVersion? @relation("OutputResumeVersion", fields: [outputResumeVersionId], references: [id])
+  jobSnapshotJson       Json?
+  rationaleJson         Json?
+  risksJson             Json?
+  changeSummaryJson     Json?
+  instructions          String?
+  status                String         @default("created")
+  revisionNote          String?
+  createdAt             DateTime       @default(now())
+  completedAt           DateTime?
+}
+
+model ApplicationAnswer {
+  id            String            @id @default(cuid())
+  applicationId String
+  application   Application       @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  fieldKey      String
+  fieldLabel    String
+  fieldGroup    String?
+  answerJson    Json?
+  sourceType    AnswerSourceType  @default(agent)
+  confidence    Float?
+  reviewState   AnswerReviewState @default(needs_review)
+  updatedAt     DateTime          @updatedAt
+
+  @@unique([applicationId, fieldKey])
+}
+
+model ApplicationAttachment {
+  id              String          @id @default(cuid())
+  applicationId   String
+  application     Application     @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  attachmentType  AttachmentType  @default(resume)
+  resumeVersionId String?
+  resumeVersion   ResumeVersion?  @relation(fields: [resumeVersionId], references: [id])
+  fileUrl         String
+  filename        String
+  createdAt       DateTime        @default(now())
+}
+
+model PortalSession {
+  id                 String              @id @default(cuid())
+  applicationId      String
+  application        Application         @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  mode               PortalSessionMode   @default(manual)
+  launchUrl          String
+  providerDomain     String
+  status             PortalSessionStatus @default(not_started)
+  lastKnownPageTitle String?
+  lastSyncedAt       DateTime?
+  sessionSummaryJson Json?
+  notes              String?
+}
+
+model AuditEvent {
+  id          String    @id @default(cuid())
+  entityType  String
+  entityId    String
+  eventType   String
+  actorType   ActorType
+  actorLabel  String
+  beforeState Json?
+  afterState  Json?
+  payloadJson Json?
+  createdAt   DateTime  @default(now())
+
+  @@index([entityType, entityId, createdAt])
+}

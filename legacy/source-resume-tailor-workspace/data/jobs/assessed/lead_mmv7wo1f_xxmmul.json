@@ -1,0 +1,19 @@
+{
+  "fit_band": "light_tailor",
+  "fit_score": 0.815,
+  "job_ref": {
+    "id": "lead_mmv7wo1f_xxmmul",
+    "type": "lead_uid"
+  },
+  "recommended_action": "light_tailor",
+  "risk_flags": [],
+  "selected_variant": "analytics",
+  "summary_path": null,
+  "top_reasons": [
+    "Selected analytics variant from canonical achievement overlap",
+    "Matched evidence: Consolidated multi-source market and customer data into a structured dataset for repeatable analysis and reporting.",
+    "Applied small upstream prior from lead registry fit_score=100",
+    "Upstream role family hint: data-analyst"
+  ],
+  "unsupported_requirements": []
+}

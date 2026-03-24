@@ -1,0 +1,21 @@
+{
+  "fit_band": "use_base",
+  "fit_score": 0.901,
+  "job_ref": {
+    "id": "lead_mmv7wo23_fk8sz6",
+    "type": "lead_uid"
+  },
+  "recommended_action": "use_base",
+  "risk_flags": [
+    "seniority:high"
+  ],
+  "selected_variant": "business_analyst",
+  "summary_path": null,
+  "top_reasons": [
+    "Selected business_analyst variant from canonical achievement overlap",
+    "Matched evidence: Built a bottom-up / parameterized TAM and demand model to support GTM planning and investment memos.",
+    "Applied small upstream prior from lead registry fit_score=92",
+    "Upstream role family hint: business-analyst"
+  ],
+  "unsupported_requirements": []
+}

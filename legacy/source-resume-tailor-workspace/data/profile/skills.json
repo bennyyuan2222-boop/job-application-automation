@@ -1,0 +1,27 @@
+{
+  "skills": {
+    "primary": [
+      "SQL",
+      "Python",
+      "Data Cleaning",
+      "EDA",
+      "A/B Testing & Experimentation",
+      "Dashboarding (Tableau/Power BI/Looker)",
+      "Excel (PivotTables)",
+      "Data Visualization",
+      "Data Modeling",
+      "ELT/ETL",
+      "dbt",
+      "Airflow",
+      "Snowflake",
+      "PostgreSQL",
+      "Stripe/HubSpot APIs",
+      "Git"
+    ],
+    "languages": [
+      "English (Native)",
+      "Mandarin (Native)",
+      "Italian (Basic)"
+    ]
+  }
+}

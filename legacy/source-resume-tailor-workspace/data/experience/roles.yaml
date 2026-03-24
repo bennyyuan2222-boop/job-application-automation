@@ -1,0 +1,73 @@
+roles:
+  - id: role_odun_data_research_intern
+    company: Odun Technology
+    title: Data Research Intern
+    start: 2025-06
+    end: 2025-12
+    location: Shenzhen, China
+    role_type: internship
+    domains:
+      - market research
+      - go-to-market
+      - business analysis
+      - strategy
+    technologies:
+      - Excel
+      - Python
+      - SQL
+    responsibilities:
+      - Consolidated multi-source market and customer data into structured datasets for repeatable analysis and reporting.
+      - Built bottom-up / parameterized TAM and demand models for GTM planning and investment memos.
+      - Produced regional penetration analyses and heat maps to support expansion prioritization.
+      - Analyzed business health and unit economics metrics including margins and turnover.
+      - Conducted competitive intelligence and customer research using public sources, surveys, and interviews.
+      - Delivered executive-style readouts linking analysis to pricing, positioning, rollout, and growth decisions.
+    leadership:
+      people_managed: 0
+      mentorship: false
+  - id: role_kalodata_data_science_intern
+    company: Kalodata
+    title: Data Science Intern
+    start: 2024-06
+    end: 2024-08
+    location: Shenzhen, China
+    role_type: internship
+    domains:
+      - product analytics
+      - retention
+      - user behavior
+      - experimentation
+    technologies:
+      - SQL
+      - Python
+      - Dashboarding
+    responsibilities:
+      - Built geo-based retention cohorts to diagnose adoption differences across US and China users.
+      - Segmented cohorts by customer persona and workflow to identify feature adoption patterns and churn drivers.
+      - Defined and tracked D1/D7 retention and feature adoption KPIs.
+      - Partnered with Product to redesign advanced filtering UX using insight-led labels and clearer framing.
+      - Built and maintained recurring monitoring dashboards for retention and feature adoption.
+    leadership:
+      people_managed: 0
+      mentorship: false
+  - id: role_cssa_head_career_community
+    company: Chinese Student and Scholar Association (CSSA)
+    title: Head of Career and Community Development
+    start: 2023-09
+    end: present
+    location: New York, NY
+    role_type: leadership
+    domains:
+      - community
+      - events
+      - partnerships
+      - operations
+    technologies:
+      - Excel
+    responsibilities:
+      - Led a 15-member team delivering networking and career events.
+      - Managed venue, logistics, promotion, outreach, and partnership coordination.
+      - Tracked targets and sub-team performance in Excel.
+    leadership:
+      people_managed: 15
+      mentorship: true

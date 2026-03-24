@@ -1,0 +1,40 @@
+projects:
+  - id: project_revenue_ops_analytics
+    name: Revenue Operations / Funnel & Churn Analytics
+    linked_roles: []
+    summary: Built RevOps and revenue analytics models linking CRM, activation, billing, churn, and subscription outcomes across Stripe and HubSpot data.
+    technologies:
+      - SQL
+      - Python
+      - Stripe API
+      - HubSpot API
+      - Tableau
+      - Power BI
+      - Looker
+    domains:
+      - revenue operations
+      - SaaS analytics
+      - churn
+      - retention
+    outcomes:
+      - Implemented scheduled ingestion from Stripe and HubSpot into raw and staging layers.
+      - Built canonical entity/account mapping across CRM and billing identifiers.
+      - Modeled KPI-ready marts for MRR, churn, retention, activation, pipeline conversion, and time-to-close.
+      - Distinguished involuntary and voluntary churn for targeted operational follow-up.
+  - id: project_rate_my_professor_bias
+    name: Rate My Professor Bias Analysis
+    linked_roles: []
+    summary: Analyzed a 70K+ dataset to study rating drivers and potential bias using statistical testing and regression/PCA methods.
+    technologies:
+      - Python
+      - Regression
+      - PCA
+    domains:
+      - statistical analysis
+      - education data
+      - bias analysis
+    outcomes:
+      - Standardized and cleaned a 70K+ record dataset.
+      - Applied weighting/shrinkage corrections and non-parametric tests.
+      - Built regression models with PCA and achieved R² = 0.72.
+      - Produced publication-style reporting artifacts and decision-ready insights.

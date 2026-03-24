@@ -1,0 +1,15 @@
+{
+  "name": "@job-ops/needle-worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@job-ops/db": "*",
+    "@job-ops/domain": "*",
+    "@job-ops/tailoring": "*"
+  }
+}

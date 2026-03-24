@@ -1,0 +1,41 @@
+skills:
+  technical:
+    - SQL
+    - Python
+    - pandas
+    - Data Cleaning
+    - EDA
+    - A/B Testing
+    - Experimentation
+    - Data Modeling
+    - ELT
+    - ETL
+    - dbt
+    - Airflow
+    - Snowflake
+    - PostgreSQL
+    - APIs
+    - Stripe API
+    - HubSpot API
+    - Tableau
+    - Power BI
+    - Looker
+    - Excel
+    - Git
+  analytical:
+    - Cohort Analysis
+    - Retention Analysis
+    - Churn Analysis
+    - KPI Definition
+    - Dashboarding
+    - TAM Modeling
+    - Market Research
+    - Competitive Intelligence
+    - Unit Economics
+    - Regression
+    - PCA
+    - Non-parametric Testing
+  languages:
+    - English
+    - Mandarin
+    - Italian

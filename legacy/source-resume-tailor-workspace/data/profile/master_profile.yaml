@@ -1,0 +1,12 @@
+person:
+  name: Benny Yuan
+  timezone: America/New_York
+  target_roles: []
+summary_facts:
+  years_experience: null
+  strongest_domains: []
+  strongest_technologies: []
+constraints:
+  no_claims_without_evidence: true
+  forbid_invented_metrics: true
+  forbid_invented_ownership: true

@@ -1,0 +1,92 @@
+{
+  "experience_sections": [
+    {
+      "bullets": [
+        {
+          "achievement_id": "ach_kalodata_segmentation",
+          "evidence_strength": "verified",
+          "text": "Segmented cohorts by customer persona and workflow to identify advanced filter adoption as a behavioral driver of churn in China."
+        },
+        {
+          "achievement_id": "ach_kalodata_retention_cohorts",
+          "evidence_strength": "verified",
+          "text": "Built geo-based retention cohorts for US and China users to diagnose adoption differences and retention gaps."
+        },
+        {
+          "achievement_id": "ach_kalodata_retention_lift",
+          "evidence_strength": "verified",
+          "text": "Contributed to a +3% improvement in China D1 retention after advanced filtering UX changes."
+        }
+      ],
+      "company": "Kalodata",
+      "date_range": "2024-06 to 2024-08",
+      "role_id": "role_kalodata_data_science_intern",
+      "title": "Data Science Intern"
+    }
+  ],
+  "fit_band": "light_tailor",
+  "fit_score": 0.815,
+  "job_ref": {
+    "id": "lead_mmv7wo1f_xxmmul",
+    "type": "lead_uid"
+  },
+  "project_sections": [
+    {
+      "bullets": [
+        {
+          "achievement_id": "ach_rmp_r2",
+          "evidence_strength": "verified",
+          "text": "Built regression models with PCA and achieved R\u00b2 = 0.72."
+        },
+        {
+          "achievement_id": "ach_rmp_data_prep",
+          "evidence_strength": "verified",
+          "text": "Standardized and cleaned a 70K+ record dataset and documented assumptions for repeatable analysis."
+        },
+        {
+          "achievement_id": "ach_rmp_testing",
+          "evidence_strength": "verified",
+          "text": "Applied non-parametric tests and regression/PCA methods to evaluate rating drivers and potential bias."
+        }
+      ],
+      "name": "Rate My Professor Bias Analysis",
+      "project_id": "project_rate_my_professor_bias"
+    },
+    {
+      "bullets": [
+        {
+          "achievement_id": "ach_revops_entity_resolution",
+          "evidence_strength": "verified",
+          "text": "Built a canonical account/entity mapping layer across CRM and billing systems to support reliable joins and funnel analysis."
+        },
+        {
+          "achievement_id": "ach_revops_ingestion",
+          "evidence_strength": "verified",
+          "text": "Implemented scheduled ingestion from Stripe and HubSpot APIs into raw and staging layers with reproducible transforms."
+        }
+      ],
+      "name": "Revenue Operations / Funnel & Churn Analytics",
+      "project_id": "project_revenue_ops_analytics"
+    }
+  ],
+  "rationale": [
+    "Selected ach_rmp_r2 because it overlaps with the target role and is verified.",
+    "Selected ach_revops_entity_resolution because it overlaps with the target role and is verified.",
+    "Selected ach_rmp_data_prep because it overlaps with the target role and is verified."
+  ],
+  "recommended_action": "light_tailor",
+  "risk_flags": [],
+  "selected_variant": "analytics",
+  "source_achievement_ids": [
+    "ach_rmp_r2",
+    "ach_revops_entity_resolution",
+    "ach_rmp_data_prep",
+    "ach_rmp_testing",
+    "ach_kalodata_segmentation",
+    "ach_revops_ingestion",
+    "ach_kalodata_retention_cohorts",
+    "ach_kalodata_retention_lift"
+  ],
+  "summary": "Data-focused analyst with experience in retention, churn, KPI modeling, revenue analytics, and statistical analysis across product and business datasets.",
+  "unsupported_requirements": []
+}

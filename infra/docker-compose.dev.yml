@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: job-ops-console-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: jobops_console
+      POSTGRES_USER: jobops
+      POSTGRES_PASSWORD: jobops
+    ports:
+      - "5432:5432"
+    volumes:
+      - job_ops_console_postgres:/var/lib/postgresql/data
+
+volumes:
+  job_ops_console_postgres:

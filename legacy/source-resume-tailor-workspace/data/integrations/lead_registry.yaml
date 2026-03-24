@@ -1,0 +1,12 @@
+lead_registry:
+  path: /Users/clawbot/.openclaw/workspace-job-searcher/data/lead-registry/lead-registry.sqlite
+  tables:
+    leads: leads
+    observations: lead_observations
+    status_history: lead_status_history
+  summary_preference_order:
+    - canonical_summary
+    - latest_observation_summary
+    - raw_json_summary
+  use_upstream_priors: true
+  upstream_prior_weight: 0.05

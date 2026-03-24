@@ -1,0 +1,13 @@
+{
+  "name": "@job-ops/readiness",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@job-ops/domain": "*"
+  }
+}

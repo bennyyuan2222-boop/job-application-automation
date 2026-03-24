@@ -1,0 +1,58 @@
+{
+  "variants": [
+    {
+      "variant_id": "analytics",
+      "label": "Analytics",
+      "summary": "Data-focused analyst with experience in retention, churn, KPI modeling, revenue analytics, and statistical analysis across product and business datasets.",
+      "source_achievement_ids": [
+        "ach_kalodata_retention_cohorts",
+        "ach_kalodata_segmentation",
+        "ach_kalodata_kpi_reporting",
+        "ach_kalodata_retention_lift",
+        "ach_revops_ingestion",
+        "ach_revops_entity_resolution",
+        "ach_revops_kpi_marts",
+        "ach_revops_churn_logic",
+        "ach_rmp_data_prep",
+        "ach_rmp_testing",
+        "ach_rmp_r2"
+      ]
+    },
+    {
+      "variant_id": "business_analyst",
+      "label": "Business Analyst",
+      "summary": "Analytical operator with experience translating market, product, and operational data into KPI definitions, growth insights, and stakeholder-ready recommendations.",
+      "source_achievement_ids": [
+        "ach_odun_dataset_consolidation",
+        "ach_odun_tam_model",
+        "ach_odun_penetration_analysis",
+        "ach_odun_unit_economics",
+        "ach_odun_competitive_research",
+        "ach_odun_exec_readouts",
+        "ach_kalodata_segmentation",
+        "ach_kalodata_kpi_reporting",
+        "ach_kalodata_product_partner",
+        "ach_revops_entity_resolution",
+        "ach_revops_kpi_marts",
+        "ach_cssa_team_lead",
+        "ach_cssa_partnerships",
+        "ach_cssa_excel_tracking"
+      ]
+    },
+    {
+      "variant_id": "product_strategy",
+      "label": "Product Strategy",
+      "summary": "Strategy-oriented analyst with experience in TAM modeling, market research, product insight generation, and cross-functional recommendation-making.",
+      "source_achievement_ids": [
+        "ach_odun_tam_model",
+        "ach_odun_penetration_analysis",
+        "ach_odun_competitive_research",
+        "ach_odun_exec_readouts",
+        "ach_kalodata_product_partner",
+        "ach_cssa_team_lead",
+        "ach_cssa_partnerships",
+        "ach_cssa_amazon_tour"
+      ]
+    }
+  ]
+}

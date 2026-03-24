@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Node / web
+node_modules/
+.npm/
+.next/
+dist/
+build/
+coverage/
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Local artifacts
+artifacts/local-dev/
+
+# Logs
+*.log

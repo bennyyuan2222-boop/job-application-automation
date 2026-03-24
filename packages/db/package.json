@@ -1,0 +1,17 @@
+{
+  "name": "@job-ops/db",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "prisma:generate": "prisma generate --schema prisma/schema.prisma",
+    "prisma:migrate": "prisma migrate dev --schema prisma/schema.prisma",
+    "seed": "tsx prisma/seed.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@job-ops/tailoring": "*",
+    "@prisma/client": "^6.7.0"
+  }
+}

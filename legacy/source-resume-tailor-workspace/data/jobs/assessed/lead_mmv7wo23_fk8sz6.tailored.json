@@ -1,0 +1,183 @@
+{
+  "density_estimate": {
+    "estimated_lines": 39,
+    "total_bullets": 18
+  },
+  "experience_sections": [
+    {
+      "bullets": [
+        {
+          "achievement_id": "ach_odun_tam_model",
+          "evidence_strength": "verified",
+          "text": "Built a bottom-up / parameterized TAM and demand model to support GTM planning and investment memos."
+        },
+        {
+          "achievement_id": "ach_odun_exec_readouts",
+          "evidence_strength": "supported",
+          "text": "Delivered executive-style readouts connecting analysis to pricing, positioning, rollout sequencing, and growth hypotheses to align stakeholders on next steps."
+        },
+        {
+          "achievement_id": "ach_odun_unit_economics",
+          "evidence_strength": "supported",
+          "text": "Analyzed business health and unit economics metrics including margins, operating margin, and inventory turnover to support decision-making."
+        },
+        {
+          "achievement_id": "ach_odun_competitive_research",
+          "evidence_strength": "verified",
+          "text": "Conducted competitive intelligence and customer research using public sources, surveys, and interviews to identify adoption and pricing drivers."
+        }
+      ],
+      "company": "Odun Technology",
+      "date_range": "2025-06 to 2025-12",
+      "role_id": "role_odun_data_research_intern",
+      "title": "Data Research Intern"
+    },
+    {
+      "bullets": [
+        {
+          "achievement_id": "ach_kalodata_product_partner",
+          "evidence_strength": "verified",
+          "text": "Translated retention and feature-adoption insights into product requirements and reframed technical advanced-filter parameters into outcome-oriented labels to reduce user confusion."
+        },
+        {
+          "achievement_id": "ach_kalodata_segmentation",
+          "evidence_strength": "verified",
+          "text": "Segmented cohorts by customer persona and workflow to identify advanced filter adoption as a behavioral driver of churn in China."
+        },
+        {
+          "achievement_id": "ach_kalodata_retention_lift",
+          "evidence_strength": "verified",
+          "text": "Contributed to a +3% improvement in China D1 retention after advanced filtering UX changes."
+        },
+        {
+          "achievement_id": "ach_kalodata_kpi_reporting",
+          "evidence_strength": "verified",
+          "text": "Defined D1/D7 retention and feature-adoption KPIs, built recurring monitoring dashboards, and provided ongoing stakeholder visibility into cohort health."
+        }
+      ],
+      "company": "Kalodata",
+      "date_range": "2024-06 to 2024-08",
+      "role_id": "role_kalodata_data_science_intern",
+      "title": "Data Science Intern"
+    }
+  ],
+  "fit_band": "use_base",
+  "fit_score": 0.901,
+  "jd_keywords": [
+    "requirements",
+    "workflow",
+    "planning",
+    "stakeholders",
+    "support"
+  ],
+  "job_ref": {
+    "id": "lead_mmv7wo23_fk8sz6",
+    "type": "lead_uid"
+  },
+  "leadership_sections": [
+    {
+      "bullets": [
+        {
+          "achievement_id": "ach_cssa_excel_tracking",
+          "evidence_strength": "verified",
+          "text": "Set outreach targets, tracked sub-team performance in Excel, and supported execution planning across the team."
+        },
+        {
+          "achievement_id": "ach_cssa_team_lead",
+          "evidence_strength": "verified",
+          "text": "Led a 15-member team delivering networking and career events for 200+ attendees."
+        },
+        {
+          "achievement_id": "ach_cssa_partnerships",
+          "evidence_strength": "verified",
+          "text": "Negotiated partnerships to secure $8,000 in ticket sales and sponsorship."
+        },
+        {
+          "achievement_id": "ach_cssa_amazon_tour",
+          "evidence_strength": "verified",
+          "text": "Organized an Amazon company tour and hosted 80+ students."
+        }
+      ],
+      "company": "Chinese Student and Scholar Association (CSSA)",
+      "date_range": "2023-09 to present",
+      "role_id": "role_cssa_head_career_community",
+      "title": "Head of Career and Community Development"
+    }
+  ],
+  "project_sections": [
+    {
+      "bullets": [
+        {
+          "achievement_id": "ach_revops_entity_resolution",
+          "evidence_strength": "verified",
+          "text": "Built a canonical account/entity mapping layer across CRM and billing systems to support reliable joins and funnel analysis."
+        },
+        {
+          "achievement_id": "ach_revops_churn_logic",
+          "evidence_strength": "verified",
+          "text": "Distinguished involuntary and voluntary churn to support targeted operational follow-up and reporting."
+        },
+        {
+          "achievement_id": "ach_revops_kpi_marts",
+          "evidence_strength": "verified",
+          "text": "Modeled KPI-ready marts for MRR, churn, retention, activation, pipeline conversion, and time-to-close."
+        }
+      ],
+      "name": "Revenue Operations / Funnel & Churn Analytics",
+      "project_id": "project_revenue_ops_analytics"
+    },
+    {
+      "bullets": [
+        {
+          "achievement_id": "ach_rmp_data_prep",
+          "evidence_strength": "verified",
+          "text": "Standardized and cleaned a 70K+ record dataset and documented assumptions for repeatable analysis."
+        },
+        {
+          "achievement_id": "ach_rmp_testing",
+          "evidence_strength": "verified",
+          "text": "Applied non-parametric tests and regression/PCA methods to evaluate rating drivers and potential bias."
+        },
+        {
+          "achievement_id": "ach_rmp_r2",
+          "evidence_strength": "verified",
+          "text": "Built regression models with PCA and achieved R\u00b2 = 0.72."
+        }
+      ],
+      "name": "Rate My Professor Bias Analysis",
+      "project_id": "project_rate_my_professor_bias"
+    }
+  ],
+  "rationale": [
+    "Used section density targets from Benny's original resume silhouette instead of shrinking type.",
+    "Selected 2 experience roles, 2 projects, and 1 leadership sections.",
+    "Supported JD keywords incorporated through truthful selection: requirements, workflow, planning, stakeholders, support."
+  ],
+  "recommended_action": "use_base",
+  "risk_flags": [
+    "seniority:high"
+  ],
+  "selected_variant": "business_analyst",
+  "source_achievement_ids": [
+    "ach_odun_tam_model",
+    "ach_odun_exec_readouts",
+    "ach_odun_unit_economics",
+    "ach_odun_competitive_research",
+    "ach_kalodata_product_partner",
+    "ach_kalodata_segmentation",
+    "ach_kalodata_retention_lift",
+    "ach_kalodata_kpi_reporting",
+    "ach_cssa_excel_tracking",
+    "ach_cssa_team_lead",
+    "ach_cssa_partnerships",
+    "ach_cssa_amazon_tour",
+    "ach_revops_entity_resolution",
+    "ach_revops_churn_logic",
+    "ach_revops_kpi_marts",
+    "ach_rmp_data_prep",
+    "ach_rmp_testing",
+    "ach_rmp_r2"
+  ],
+  "summary": "Analytical operator with experience translating market, product, and operational data into KPI definitions, growth insights, and stakeholder-ready recommendations with emphasis on requirements, workflow, planning.",
+  "unsupported_requirements": []
+}

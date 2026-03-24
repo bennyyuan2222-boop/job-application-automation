@@ -1,0 +1,15 @@
+{
+  "target": {
+    "experience_roles": 2,
+    "experience_bullets_per_role": {"min": 4, "target": 4, "max": 5},
+    "projects": 2,
+    "project_bullets_per_project": {"min": 3, "target": 3, "max": 4},
+    "leadership_sections": 1,
+    "leadership_bullets_per_section": {"min": 4, "target": 4, "max": 4},
+    "estimated_total_bullets": {"min": 18, "target": 19, "max": 21}
+  },
+  "notes": [
+    "Derived from Benny's original resume silhouette.",
+    "Density must be achieved via truthful bullet selection, not smaller type."
+  ]
+}

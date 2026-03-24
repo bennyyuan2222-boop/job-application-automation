@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "jobspy": {
+      "command": "node",
+      "args": [
+        "/Users/clawbot/.openclaw/workspace/job-search/mcp/vendors/jobspy-mcp-server/src/index.js"
+      ],
+      "description": "Local JobSpy MCP server for Benny job search"
+    }
+  },
+  "imports": []
+}

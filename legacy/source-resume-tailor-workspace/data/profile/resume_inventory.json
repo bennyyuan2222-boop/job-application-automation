@@ -1,0 +1,31 @@
+{
+  "sources": [
+    {
+      "id": "resume_variant_1",
+      "source_file": "3e4ce865-120b-4c65-9298-4c02de95209b.pdf",
+      "workspace_text_path": "data/raw/resumes/resume_variant_1.md",
+      "notes": [
+        "More data engineering / warehouse tooling emphasis",
+        "Includes dbt, Airflow, Snowflake/Postgres, Stripe/HubSpot APIs"
+      ]
+    },
+    {
+      "id": "resume_variant_2",
+      "source_file": "879d1cd0-6a03-46f9-8722-d7404294ae5b.pdf",
+      "workspace_text_path": "data/raw/resumes/resume_variant_2.md",
+      "notes": [
+        "More business analyst / stakeholder / KPI framing",
+        "Includes explicit D1 numbers and product requirements wording"
+      ]
+    },
+    {
+      "id": "resume_variant_3",
+      "source_file": "45a0f3ba-dc9e-49c9-88b9-8d444fb2d415.pdf",
+      "workspace_text_path": "data/raw/resumes/resume_variant_3.md",
+      "notes": [
+        "More finance / due diligence / unit economics framing",
+        "More concrete KPI wording in RevOps project"
+      ]
+    }
+  ]
+}
