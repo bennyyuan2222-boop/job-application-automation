@@ -72,11 +72,12 @@ export async function createSession(email: string) {
     throw new Error('That email is not allowed for this app.');
   }
 
+  const isProduction = process.env.NODE_ENV === 'production';
   const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE, encode(normalizedEmail), {
     httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    sameSite: isProduction ? 'none' : 'lax',
+    secure: isProduction,
     path: '/',
     maxAge: 60 * 60 * 8,
   });
