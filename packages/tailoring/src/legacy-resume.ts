@@ -7,6 +7,10 @@ function slugify(value: string): string {
     .replace(/(^-|-$)/g, '') || 'section';
 }
 
+export function buildResumeArtifactFilename(title: string, extension = 'md'): string {
+  return `${slugify(title)}.${extension.replace(/^\./, '')}`;
+}
+
 function toKind(title: string): ResumeSectionKind {
   const normalized = title.trim().toLowerCase();
   if (normalized.includes('education')) return 'education';

@@ -21,6 +21,13 @@ export const jobListItemSchema = z.object({
   rationale: z.string().nullable().optional(),
   topReasons: z.array(z.string()).default([]),
   risks: z.array(z.string()).default([]),
+  activeApplication: z
+    .object({
+      id: z.string(),
+      status: z.string(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export const resumeEntrySchema = z.object({

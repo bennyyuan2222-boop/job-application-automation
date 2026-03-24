@@ -7,6 +7,7 @@ const nextConfig = {
     '@job-ops/readiness',
     '@job-ops/tailoring',
     '@job-ops/needle-worker',
+    '@job-ops/scout-worker',
   ],
 };
 

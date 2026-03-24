@@ -4,7 +4,14 @@ import { notFound } from 'next/navigation';
 import { getApplicationDetail } from '../../../../lib/queries';
 
 export const dynamic = 'force-dynamic';
-import { addApplicationAttachment, saveApplicationAnswer, savePortalSession } from './actions';
+import {
+  addApplicationAttachment,
+  markApplicationSubmitted,
+  moveApplicationBackToApplying,
+  moveApplicationToSubmitReview,
+  saveApplicationAnswer,
+  savePortalSession,
+} from './actions';
 
 function renderValue(value: unknown) {
   if (value == null || value === '') {
@@ -231,7 +238,9 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
                   <div className="muted small">
                     {attachment.resumeVersionTitle ? `Resume: ${attachment.resumeVersionTitle}` : 'Non-resume artifact'}
                   </div>
-                  <code>{attachment.fileUrl}</code>
+                  <a href={attachment.fileUrl} className="linkish small" target="_blank" rel="noreferrer">
+                    {attachment.fileUrl}
+                  </a>
                 </li>
               ))
             )}
@@ -356,11 +365,42 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
 
       <section className="panel">
         <div className="button-row">
+          {application.status === 'applying' ? (
+            <form action={moveApplicationToSubmitReview}>
+              <input type="hidden" name="applicationId" value={application.id} />
+              <button type="submit" disabled={!readiness.ready}>
+                Move to submit review
+              </button>
+            </form>
+          ) : null}
+
+          {application.status === 'submit_review' ? (
+            <>
+              <form action={markApplicationSubmitted}>
+                <input type="hidden" name="applicationId" value={application.id} />
+                <button type="submit">Mark submitted</button>
+              </form>
+              <form action={moveApplicationBackToApplying}>
+                <input type="hidden" name="applicationId" value={application.id} />
+                <button type="submit" className="button-link secondary">
+                  Return to applying
+                </button>
+              </form>
+            </>
+          ) : null}
+
+          {application.status === 'submitted' ? (
+            <div className="status-pill ok">Application marked submitted</div>
+          ) : null}
+
           <Link href={`/tailoring/${application.id}`} className="button-link secondary">
             Open tailoring workspace
           </Link>
           <Link href="/applying" className="button-link secondary">
             Back to applying queue
+          </Link>
+          <Link href="/submit-review" className="button-link secondary">
+            Submit review queue
           </Link>
         </div>
       </section>

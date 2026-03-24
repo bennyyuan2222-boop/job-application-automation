@@ -133,12 +133,22 @@ async function getJobsByStatus(status: 'discovered' | 'shortlisted'): Promise<Jo
         orderBy: { scoredAt: 'desc' },
         take: 1,
       },
+      applications: {
+        where: {
+          status: {
+            not: 'archived',
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+      },
     },
     orderBy: [{ updatedAt: 'desc' }, { firstSeenAt: 'desc' }],
   });
 
   return jobs.map((job) => {
     const scorecard = job.scorecards[0] ?? null;
+    const activeApplication = job.applications[0] ?? null;
     return jobListItemSchema.parse({
       id: job.id,
       title: job.title,
@@ -157,6 +167,12 @@ async function getJobsByStatus(status: 'discovered' | 'shortlisted'): Promise<Jo
         : null,
       topReasons: asStringArray(scorecard?.topReasonsJson),
       risks: asStringArray(scorecard?.risksJson),
+      activeApplication: activeApplication
+        ? {
+            id: activeApplication.id,
+            status: activeApplication.status,
+          }
+        : null,
     });
   });
 }
@@ -226,11 +242,13 @@ export async function getShortlistedJobs(): Promise<JobListItem[]> {
   return getJobsByStatus('shortlisted');
 }
 
-export async function getApplyingQueue(): Promise<ApplyingQueueItem[]> {
+async function getOperationalApplicationQueue(
+  statuses: Array<'applying' | 'submit_review' | 'submitted'>,
+): Promise<ApplyingQueueItem[]> {
   const applications = await prisma.application.findMany({
     where: {
       status: {
-        in: ['applying', 'submit_review'],
+        in: statuses,
       },
     },
     include: {
@@ -272,6 +290,14 @@ export async function getApplyingQueue(): Promise<ApplyingQueueItem[]> {
       companyName: application.job.company.name,
     });
   });
+}
+
+export async function getApplyingQueue(): Promise<ApplyingQueueItem[]> {
+  return getOperationalApplicationQueue(['applying', 'submit_review']);
+}
+
+export async function getSubmitReviewQueue(): Promise<ApplyingQueueItem[]> {
+  return getOperationalApplicationQueue(['submit_review', 'submitted']);
 }
 
 export async function getApplicationDetail(applicationId: string): Promise<ApplicationDetail | null> {

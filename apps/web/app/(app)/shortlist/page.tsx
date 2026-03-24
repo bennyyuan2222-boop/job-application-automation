@@ -1,4 +1,6 @@
-import { archiveJobAction } from '../jobs/actions';
+import Link from 'next/link';
+
+import { archiveJobAction, createApplicationAction } from '../jobs/actions';
 import { getShortlistedJobs } from '../../../lib/queries';
 
 export default async function ShortlistPage() {
@@ -36,6 +38,21 @@ export default async function ShortlistPage() {
                 {job.rationale ? <p>{job.rationale}</p> : null}
 
                 <div className="button-row">
+                  {job.activeApplication ? (
+                    <Link
+                      href={job.activeApplication.status === 'applying' || job.activeApplication.status === 'submit_review' || job.activeApplication.status === 'submitted'
+                        ? `/applications/${job.activeApplication.id}`
+                        : `/tailoring/${job.activeApplication.id}`}
+                      className="button-link"
+                    >
+                      Open {job.activeApplication.status.replaceAll('_', ' ')}
+                    </Link>
+                  ) : (
+                    <form action={createApplicationAction}>
+                      <input type="hidden" name="jobId" value={job.id} />
+                      <button type="submit">Start application</button>
+                    </form>
+                  )}
                   <form action={archiveJobAction}>
                     <input type="hidden" name="jobId" value={job.id} />
                     <button type="submit" className="button-link secondary">Archive</button>

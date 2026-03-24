@@ -13,6 +13,7 @@ import {
   type TailoringRunStatus,
 } from '@job-ops/domain';
 import {
+  buildResumeArtifactFilename,
   buildTailoredResumeDraft,
   chooseBestBaseResume,
   coerceResumeDocument,
@@ -58,6 +59,10 @@ function toResumeCandidate(record: { id: string; title: string; contentMarkdown:
     contentMarkdown: record.contentMarkdown,
     document: coerceResumeDocument(record.sectionsJson, record.contentMarkdown),
   };
+}
+
+function buildResumeArtifactPath(resumeVersionId: string) {
+  return `/api/resume-artifacts/${resumeVersionId}`;
 }
 
 async function loadApplicationContext(applicationId: string) {
@@ -262,6 +267,18 @@ export async function approveTailoringRunForApplication(
     assertApplicationTransition(application.status as DomainApplicationStatus, ApplicationStatus.applying as DomainApplicationStatus);
   }
 
+  const approvedResume = await prisma.resumeVersion.findUnique({
+    where: { id: run.outputResumeVersionId },
+    select: { id: true, title: true },
+  });
+
+  if (!approvedResume) {
+    throw new Error(`Approved resume version not found: ${run.outputResumeVersionId}`);
+  }
+
+  const artifactFilename = buildResumeArtifactFilename(approvedResume.title);
+  const artifactPath = buildResumeArtifactPath(approvedResume.id);
+
   await prisma.$transaction(async (tx) => {
     await tx.tailoringRun.update({
       where: { id: run.id },
@@ -274,6 +291,23 @@ export async function approveTailoringRunForApplication(
         status: ApplicationStatus.applying,
         tailoredResumeVersionId: run.outputResumeVersionId,
         pausedReason: null,
+      },
+    });
+
+    await tx.applicationAttachment.deleteMany({
+      where: {
+        applicationId: application.id,
+        attachmentType: 'resume',
+      },
+    });
+
+    await tx.applicationAttachment.create({
+      data: {
+        applicationId: application.id,
+        attachmentType: 'resume',
+        resumeVersionId: approvedResume.id,
+        filename: artifactFilename,
+        fileUrl: artifactPath,
       },
     });
 
@@ -298,6 +332,18 @@ export async function approveTailoringRunForApplication(
           beforeState: { status: application.status },
           afterState: { status: ApplicationStatus.applying, tailoredResumeVersionId: run.outputResumeVersionId },
           payloadJson: { approvedTailoringRunId: run.id },
+        }),
+        makeAuditEvent({
+          entityType: 'application',
+          entityId: application.id,
+          eventType: 'application.resume_attachment_generated',
+          actorType: ActorType.system,
+          actorLabel: 'needle',
+          payloadJson: {
+            resumeVersionId: approvedResume.id,
+            filename: artifactFilename,
+            fileUrl: artifactPath,
+          },
         }),
       ],
     });

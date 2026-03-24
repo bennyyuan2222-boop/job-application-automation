@@ -1,0 +1,14 @@
+{
+  "name": "@job-ops/scout-worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.ts",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@job-ops/db": "*",
+    "@job-ops/domain": "*"
+  }
+}

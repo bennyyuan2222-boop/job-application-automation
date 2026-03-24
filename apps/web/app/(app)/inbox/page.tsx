@@ -1,5 +1,23 @@
-import { archiveJobAction, shortlistJobAction } from '../jobs/actions';
+import { archiveJobAction, runManualScoutIngestionAction, runSampleScoutPassAction, shortlistJobAction } from '../jobs/actions';
 import { getInboxJobs } from '../../../lib/queries';
+
+const manualScoutExample = JSON.stringify(
+  [
+    {
+      sourceRecordId: 'manual-1',
+      sourceUrl: 'https://jobs.example.com/acme-analytics-associate',
+      companyName: 'Acme AI',
+      title: 'Analytics Associate',
+      locationText: 'New York, NY',
+      description: 'SQL, experimentation, dashboards, and AI workflow analytics.',
+      salaryText: '$85k-$100k',
+      remote: false,
+      hybrid: true,
+    },
+  ],
+  null,
+  2,
+);
 
 export default async function InboxPage() {
   const jobs = await getInboxJobs();
@@ -10,6 +28,37 @@ export default async function InboxPage() {
         <p className="eyebrow">Inbox</p>
         <h1>Discovery queue</h1>
         <p className="muted">Real Scout-backed jobs from Postgres. Ranked, deduped, and traceable back to source records.</p>
+
+        <div className="button-row top-gap">
+          <form action={runSampleScoutPassAction}>
+            <button type="submit">Run sample Scout pass</button>
+          </form>
+        </div>
+
+        <details className="details-block top-gap">
+          <summary>Manual Scout ingest</summary>
+          <form action={runManualScoutIngestionAction} className="stack-form form-panel top-gap">
+            <div className="grid-two compact-grid">
+              <label className="stack-field">
+                <span>Source key</span>
+                <input name="sourceKey" defaultValue="manual-scout" />
+              </label>
+              <label className="stack-field">
+                <span>Search term</span>
+                <input name="searchTerm" defaultValue="manual import" />
+              </label>
+            </div>
+            <label className="stack-field">
+              <span>Search location</span>
+              <input name="searchLocation" defaultValue="manual" />
+            </label>
+            <label className="stack-field">
+              <span>Records JSON</span>
+              <textarea name="recordsJson" rows={12} defaultValue={manualScoutExample} />
+            </label>
+            <button type="submit">Ingest records into Scout</button>
+          </form>
+        </details>
       </section>
 
       <section className="panel">

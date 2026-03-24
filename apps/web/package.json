@@ -15,6 +15,7 @@
     "@job-ops/domain": "*",
     "@job-ops/needle-worker": "*",
     "@job-ops/readiness": "*",
+    "@job-ops/scout-worker": "*",
     "@job-ops/tailoring": "*",
     "next": "^15.3.0",
     "react": "^19.1.0",

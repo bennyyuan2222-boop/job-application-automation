@@ -128,6 +128,22 @@ button.secondary {
   flex-wrap: wrap;
 }
 
+.top-gap {
+  margin-top: 16px;
+}
+
+.details-block {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  background: var(--panel-2);
+}
+
+.details-block summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
 .inline-form {
   display: flex;
   gap: 10px;
