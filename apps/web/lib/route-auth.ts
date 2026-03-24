@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getSession } from './auth';
+import { decodeSessionToken, SESSION_COOKIE } from './auth';
 
 export async function requireRouteSession(request: NextRequest) {
-  const session = await getSession();
+  const session = decodeSessionToken(request.cookies.get(SESSION_COOKIE)?.value);
   if (!session) {
     return {
       session: null,

@@ -53,7 +53,7 @@ function decode(token: string | undefined): Session | null {
 
 export async function getSession() {
   const cookieStore = await cookies();
-  return decode(cookieStore.get(SESSION_COOKIE)?.value);
+  return decodeSessionToken(cookieStore.get(SESSION_COOKIE)?.value);
 }
 
 export async function requireSession() {
@@ -86,4 +86,6 @@ export async function createSession(email: string) {
 export async function clearSession() {
   const cookieStore = await cookies();
   cookieStore.delete(SESSION_COOKIE);
+}
+IE);
 }
