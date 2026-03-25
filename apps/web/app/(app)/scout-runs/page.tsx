@@ -36,8 +36,8 @@ export default async function ScoutRunsPage() {
         <p className="eyebrow">Scout lane</p>
         <h1>Recent Scout runs</h1>
         <p className="muted">
-          A lightweight ops surface for discovery runs: what searched, when it ran, and how many jobs were created versus
-          deduped.
+          A lightweight ops surface for discovery runs: trigger type, structured counts, and whether the run completed,
+          partially completed, or reused an earlier idempotent pass.
         </p>
       </section>
 
@@ -46,22 +46,32 @@ export default async function ScoutRunsPage() {
           <p className="muted">No Scout runs recorded yet.</p>
         ) : (
           <ul className="timeline-list">
-            {runs.map((run) => (
-              <li key={run.id} className="timeline-item">
-                <div>
-                  <strong>{formatSearchLabel(run.searchTerm, run.searchLocation)}</strong>
-                  <div className="muted small">
-                    {run.sourceKey} · fetched {run.resultCount} · created {run.createdJobCount} · deduped {run.dedupedCount}
+            {runs.map((run) => {
+              const errorCount = Array.isArray(run.errorSummaryJson) ? run.errorSummaryJson.length : 0;
+
+              return (
+                <li key={run.id} className="timeline-item">
+                  <div>
+                    <strong>{formatSearchLabel(run.searchTerm, run.searchLocation)}</strong>
+                    <div className="muted small">
+                      {run.sourceKey} · trigger {run.triggerType} · status {run.status}
+                    </div>
+                    <div className="muted small">
+                      fetched {run.fetchedCount} · captured {run.capturedCount} · normalized {run.normalizedCount} · rejected{' '}
+                      {run.rejectedCount} · errored {run.erroredCount} · created {run.createdJobCount} · deduped{' '}
+                      {run.dedupedCount}
+                    </div>
+                    {run.idempotencyKey ? <div className="muted small">idempotency: {run.idempotencyKey}</div> : null}
+                    {run.notes ? <div className="muted small">{run.notes}</div> : null}
+                    {errorCount > 0 ? <div className="muted small">error summaries: {errorCount}</div> : null}
                   </div>
-                  {run.notes ? <div className="muted small">{run.notes}</div> : null}
-                </div>
-                <div className="muted small right-align">
-                  <div>{run.status}</div>
-                  <div>{new Date(run.startedAt).toLocaleString()}</div>
-                  <div>{formatDuration(run.startedAt, run.completedAt)}</div>
-                </div>
-              </li>
-            ))}
+                  <div className="muted small right-align">
+                    <div>{new Date(run.startedAt).toLocaleString()}</div>
+                    <div>{formatDuration(run.startedAt, run.completedAt)}</div>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

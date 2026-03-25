@@ -28,6 +28,7 @@ type JobSpySearchResponse = {
 
 type JobSpyJob = {
   id?: unknown;
+  title?: unknown;
   jobTitle?: unknown;
   jobSummary?: unknown;
   description?: unknown;
@@ -39,8 +40,10 @@ type JobSpyJob = {
   datePosted?: unknown;
   salary?: unknown;
   salaryCurrency?: unknown;
+  currency?: unknown;
   minAmount?: unknown;
   maxAmount?: unknown;
+  company?: unknown;
   companyName?: unknown;
   isRemote?: unknown;
   workFromHomeType?: unknown;
@@ -54,7 +57,7 @@ export async function resolveScoutRunInput(
       provider: options.provider,
       profile: { ...initialScoutProfile, provider: options.provider },
       runInput: buildInitialScoutFixtureRunInput(options.trigger),
-      caveat: 'Fixture-backed entrypoint is live. Real JobSpy MCP fetching is still a separate next feature.',
+      caveat: 'Fixture-backed entrypoint is live. Real JobSpy MCP fetching is optional, but no longer the only path.',
     };
   }
 
@@ -110,10 +113,23 @@ async function buildJobSpyMcpRunInput(
       searchTerm: initialScoutProfile.searchTerm,
       searchLocation: initialScoutProfile.searchLocation,
       actorLabel: `scout-${trigger}-jobspy-mcp`,
+      triggerType: trigger,
+      fetchedCount: jobs.length,
+      rejectedCount: droppedCount,
+      queryJson: {
+        providerKey: provider,
+        boardKey: initialScoutProfile.board,
+        triggerType: trigger,
+        url: apiUrl,
+        requestedResults,
+        receivedCount: jobs.length,
+        mappedCount: mappedRecords.length,
+        droppedCount,
+        hoursOld,
+      },
       notes: [
-        `provider=jobspy-mcp`,
+        `provider=${provider}`,
         `board=${initialScoutProfile.board}`,
-        `trigger=${trigger}`,
         `url=${apiUrl}`,
         `requested=${requestedResults}`,
         `received=${jobs.length}`,
@@ -150,15 +166,12 @@ function mapJobSpyJobToRawScoutInput(
     .filter((value): value is string => Boolean(value))
     .join(', ');
 
-  const locationText =
-    asNonEmptyString(job.location) ??
-    (cityStateLocation || initialScoutProfile.searchLocation);
+  const locationText = asNonEmptyString(job.location) ?? (cityStateLocation || initialScoutProfile.searchLocation);
 
   const directUrl = asNonEmptyString(job.jobUrlDirect);
   const fallbackUrl = asNonEmptyString(job.jobUrl);
   const sourceUrl = directUrl ?? fallbackUrl ?? null;
-  const sourceRecordId =
-    asNonEmptyString(job.id) ?? sourceUrl ?? `${companyName}:${title}:${locationText}:${index + 1}`;
+  const sourceRecordId = asNonEmptyString(job.id) ?? sourceUrl ?? `${companyName}:${title}:${locationText}:${index + 1}`;
 
   const workFromHomeType = asNonEmptyString(job.workFromHomeType)?.toLowerCase() ?? null;
 
@@ -189,7 +202,7 @@ function buildSalaryText(job: JobSpyJob): string | null {
     return null;
   }
 
-  const currency = asNonEmptyString(job.salaryCurrency) ?? '$';
+  const currency = asNonEmptyString(job.salaryCurrency) ?? asNonEmptyString(job.currency) ?? '$';
   if (minAmount !== null && maxAmount !== null) {
     return `${currency}${Math.round(minAmount)}-${currency}${Math.round(maxAmount)}`;
   }

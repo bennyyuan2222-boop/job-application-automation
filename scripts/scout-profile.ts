@@ -14,6 +14,7 @@ export const initialScoutProfile = Object.freeze({
   resultsWanted: 10,
   hoursOld: 72,
   countryIndeed: 'USA',
+  timezone: 'America/New_York',
 } as const);
 
 export function isScoutRunTrigger(value: string): value is ScoutRunTrigger {
@@ -26,6 +27,23 @@ export function isScoutProvider(value: string): value is ScoutProvider {
 
 export function buildScoutSourceKey(provider: ScoutProvider): string {
   return provider === 'fixture' ? 'fixture-jobspy-indeed' : 'jobspy-mcp-indeed';
+}
+
+export function buildScoutIdempotencyKey(provider: ScoutProvider, trigger: ScoutRunTrigger, now = new Date()) {
+  if (trigger !== 'scheduled' && trigger !== 'backfill') {
+    return null;
+  }
+
+  const dateKey = formatDateInTimezone(now, initialScoutProfile.timezone);
+  return [
+    'scout',
+    provider,
+    trigger,
+    initialScoutProfile.board,
+    slugify(initialScoutProfile.searchTerm),
+    slugify(initialScoutProfile.searchLocation),
+    dateKey,
+  ].join(':');
 }
 
 export function getInitialScoutFixtureRecords(sourceKey = buildScoutSourceKey('fixture')): RawScoutJobInput[] {
@@ -62,13 +80,41 @@ export function getInitialScoutFixtureRecords(sourceKey = buildScoutSourceKey('f
 
 export function buildInitialScoutFixtureRunInput(trigger: ScoutRunTrigger): RunScoutIngestionInput {
   const sourceKey = buildScoutSourceKey('fixture');
+  const records = getInitialScoutFixtureRecords(sourceKey);
 
   return {
     sourceKey,
     searchTerm: initialScoutProfile.searchTerm,
     searchLocation: initialScoutProfile.searchLocation,
     actorLabel: `scout-${trigger}-fixture`,
-    notes: `provider=fixture;board=${initialScoutProfile.board};trigger=${trigger}`,
-    records: getInitialScoutFixtureRecords(sourceKey),
+    triggerType: trigger,
+    fetchedCount: records.length,
+    rejectedCount: 0,
+    queryJson: {
+      providerKey: 'fixture',
+      boardKey: initialScoutProfile.board,
+      triggerType: trigger,
+      requestedResults: records.length,
+      receivedCount: records.length,
+      mappedCount: records.length,
+      droppedCount: 0,
+    },
+    notes: `provider=fixture;board=${initialScoutProfile.board};requested=${records.length};received=${records.length};mapped=${records.length};dropped=0`,
+    records,
   };
+}
+
+function formatDateInTimezone(date: Date, timeZone: string) {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+  return formatter.format(date);
+}
+
+function slugify(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }

@@ -1,6 +1,7 @@
 import { prisma } from '@job-ops/db';
 import { runScoutIngestion } from '../workers/scout/index.js';
 import {
+  buildScoutIdempotencyKey,
   initialScoutProfile,
   isScoutProvider,
   isScoutRunTrigger,
@@ -46,7 +47,12 @@ function parseArgs(argv: string[]): ScoutRunCliOptions {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const resolved = await resolveScoutRunInput(options);
-  const run = await runScoutIngestion(resolved.runInput);
+  const idempotencyKey = buildScoutIdempotencyKey(resolved.provider, options.trigger);
+  const { run, reusedExistingRun } = await runScoutIngestion({
+    ...resolved.runInput,
+    triggerType: options.trigger,
+    idempotencyKey,
+  });
 
   console.log(
     JSON.stringify(
@@ -60,14 +66,23 @@ async function main() {
           sourceKey: run.sourceKey,
           searchTerm: run.searchTerm,
           searchLocation: run.searchLocation,
+          triggerType: run.triggerType,
           status: run.status,
+          idempotencyKey: run.idempotencyKey,
           resultCount: run.resultCount,
+          fetchedCount: run.fetchedCount,
+          capturedCount: run.capturedCount,
+          normalizedCount: run.normalizedCount,
+          rejectedCount: run.rejectedCount,
+          erroredCount: run.erroredCount,
           createdJobCount: run.createdJobCount,
           dedupedCount: run.dedupedCount,
+          errorSummaryJson: run.errorSummaryJson,
           startedAt: run.startedAt.toISOString(),
           completedAt: run.completedAt ? run.completedAt.toISOString() : null,
           notes: run.notes,
         },
+        reusedExistingRun,
         caveat: resolved.caveat ?? null,
         initialProfileDefaults: initialScoutProfile,
       },

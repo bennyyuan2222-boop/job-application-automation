@@ -1,6 +1,11 @@
 import { prisma } from '@job-ops/db';
 import { runScoutIngestion } from '../workers/scout/index.js';
-import { initialScoutProfile, isScoutProvider, type ScoutProvider } from './scout-profile.js';
+import {
+  buildScoutIdempotencyKey,
+  initialScoutProfile,
+  isScoutProvider,
+  type ScoutProvider,
+} from './scout-profile.js';
 import { resolveScoutRunInput } from './scout-source-adapters.js';
 
 async function main() {
@@ -13,7 +18,11 @@ async function main() {
     trigger: 'test',
   });
 
-  await runScoutIngestion(resolved.runInput);
+  const result = await runScoutIngestion({
+    ...resolved.runInput,
+    triggerType: 'test',
+    idempotencyKey: buildScoutIdempotencyKey(provider, 'test'),
+  });
 
   const jobs = await prisma.job.findMany({
     include: {
@@ -45,6 +54,21 @@ async function main() {
         provider,
         profile: resolved.profile,
         caveat: resolved.caveat ?? null,
+        latestRunResult: {
+          reusedExistingRun: result.reusedExistingRun,
+          id: result.run.id,
+          triggerType: result.run.triggerType,
+          status: result.run.status,
+          idempotencyKey: result.run.idempotencyKey,
+          fetchedCount: result.run.fetchedCount,
+          capturedCount: result.run.capturedCount,
+          normalizedCount: result.run.normalizedCount,
+          rejectedCount: result.run.rejectedCount,
+          erroredCount: result.run.erroredCount,
+          createdJobCount: result.run.createdJobCount,
+          dedupedCount: result.run.dedupedCount,
+          errorSummaryJson: result.run.errorSummaryJson,
+        },
         jobs: jobs.map((job) => ({
           id: job.id,
           title: job.title,
@@ -58,11 +82,19 @@ async function main() {
           sourceKey: run.sourceKey,
           searchTerm: run.searchTerm,
           searchLocation: run.searchLocation,
+          triggerType: run.triggerType,
           status: run.status,
-          notes: run.notes,
+          idempotencyKey: run.idempotencyKey,
+          fetchedCount: run.fetchedCount,
+          capturedCount: run.capturedCount,
+          normalizedCount: run.normalizedCount,
+          rejectedCount: run.rejectedCount,
+          erroredCount: run.erroredCount,
           resultCount: run.resultCount,
           createdJobCount: run.createdJobCount,
           dedupedCount: run.dedupedCount,
+          errorSummaryJson: run.errorSummaryJson,
+          notes: run.notes,
         })),
         events: events.map((event) => ({
           entityType: event.entityType,
