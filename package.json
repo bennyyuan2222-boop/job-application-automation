@@ -28,6 +28,10 @@
     "scout:seed:local": "dotenv -e .env -- npm run scout:seed",
     "scout:run": "tsx scripts/scout-run.ts",
     "scout:run:local": "dotenv -e .env -- npm run scout:run --",
+    "scout:run:gateway": "bash scripts/scout-run-gateway.sh",
+    "scout:run:gateway:local": "dotenv -e .env -- npm run scout:run:gateway --",
+    "scout:run:gateway:scheduled": "bash scripts/scout-run-gateway.sh --trigger=scheduled",
+    "scout:run:gateway:backfill": "bash scripts/scout-run-gateway.sh --trigger=backfill",
     "scout:validate": "tsx scripts/scout-validate.ts",
     "scout:validate:local": "dotenv -e .env -- npm run scout:validate"
   },

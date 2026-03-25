@@ -139,8 +139,8 @@ function mapJobSpyJobToRawScoutInput(
   index: number,
   sourceKey: string,
 ): RawScoutJobInput | null {
-  const companyName = asNonEmptyString(job.companyName);
-  const title = asNonEmptyString(job.jobTitle);
+  const companyName = asNonEmptyString(job.companyName) ?? asNonEmptyString(job.company);
+  const title = asNonEmptyString(job.jobTitle) ?? asNonEmptyString(job.title);
 
   if (!companyName || !title) {
     return null;
