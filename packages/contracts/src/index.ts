@@ -151,6 +151,20 @@ export const auditEventItemSchema = z.object({
   payloadJson: z.unknown().nullable().optional(),
 });
 
+export const scoutRunSummarySchema = z.object({
+  id: z.string(),
+  sourceKey: z.string(),
+  searchTerm: z.string().nullable(),
+  searchLocation: z.string().nullable(),
+  status: z.string(),
+  resultCount: z.number(),
+  createdJobCount: z.number(),
+  dedupedCount: z.number(),
+  notes: z.string().nullable(),
+  startedAt: z.string(),
+  completedAt: z.string().nullable(),
+});
+
 export const applicationDetailSchema = z.object({
   id: z.string(),
   status: z.string(),
@@ -239,6 +253,7 @@ export type ApplicationAnswerItem = z.infer<typeof applicationAnswerItemSchema>;
 export type ApplicationAttachmentItem = z.infer<typeof applicationAttachmentItemSchema>;
 export type PortalSessionItem = z.infer<typeof portalSessionItemSchema>;
 export type AuditEventItem = z.infer<typeof auditEventItemSchema>;
+export type ScoutRunSummary = z.infer<typeof scoutRunSummarySchema>;
 export type ApplicationDetail = z.infer<typeof applicationDetailSchema>;
 export type ApplyingQueueItem = z.infer<typeof applyingQueueItemSchema>;
 export type TailoringQueueItem = z.infer<typeof tailoringQueueItemSchema>;

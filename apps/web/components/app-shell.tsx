@@ -7,6 +7,7 @@ const navItems = [
   { href: '/tailoring', label: 'Tailoring' },
   { href: '/applying', label: 'Applying' },
   { href: '/submit-review', label: 'Submit Review' },
+  { href: '/scout-runs', label: 'Scout Runs' },
   { href: '/activity', label: 'Activity' },
 ];
 

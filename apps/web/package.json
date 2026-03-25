@@ -14,6 +14,7 @@
     "@job-ops/db": "*",
     "@job-ops/domain": "*",
     "@job-ops/needle-worker": "*",
+    "@job-ops/read-models": "*",
     "@job-ops/readiness": "*",
     "@job-ops/scout-worker": "*",
     "@job-ops/tailoring": "*",

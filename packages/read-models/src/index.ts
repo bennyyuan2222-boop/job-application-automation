@@ -1,3 +1,5 @@
+export { getRecentScoutRuns } from './scout';
+
 import {
   applicationAnswerItemSchema,
   applicationAttachmentItemSchema,
