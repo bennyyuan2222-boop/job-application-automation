@@ -7,6 +7,20 @@ export type ScoutRunTriggerType = (typeof scoutRunTriggerTypes)[number];
 
 type ScoutRunRecord = Awaited<ReturnType<typeof prisma.scrapeRun.findFirstOrThrow>>;
 
+type ScoutDecisionVerdict = 'shortlist' | 'archive' | 'defer' | 'needs_human_review';
+
+type ScoutDecisionDraft = {
+  verdict: ScoutDecisionVerdict;
+  confidence: number;
+  reasons: string[];
+  ambiguityFlags: string[];
+  actedAutomatically: boolean;
+  resultingStatus: JobStatus;
+  policyVersion: string;
+};
+
+const SCOUT_DECISION_POLICY_VERSION = 'scout-decision-v1';
+
 export type RunScoutIngestionInput = {
   sourceKey: string;
   searchTerm?: string;
@@ -101,6 +115,8 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
         capturedCount += 1;
         normalizedCount += 1;
 
+        const decisionDraft = buildScoutDecisionDraft(normalized, score);
+
         const existingJob = await prisma.job.findFirst({
           where: {
             OR: [
@@ -118,9 +134,13 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
         if (existingJob) {
           dedupedCount += 1;
 
-          await prisma.job.update({
+          const shouldAutoApplyDecision = existingJob.status === JobStatus.discovered && decisionDraft.actedAutomatically;
+          const resultingStatus = shouldAutoApplyDecision ? decisionDraft.resultingStatus : existingJob.status;
+
+          const updatedJob = await prisma.job.update({
             where: { id: existingJob.id },
             data: {
+              status: resultingStatus,
               lastSeenAt: new Date(),
               jobDescriptionClean: normalized.descriptionClean || existingJob.jobDescriptionClean,
               salaryText: normalized.salaryText ?? existingJob.salaryText,
@@ -146,6 +166,18 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
           await prisma.jobSourceRecord.update({
             where: { id: sourceRecord.id },
             data: { status: 'deduped', errorMessage: null },
+          });
+
+          await persistScoutDecision({
+            jobId: updatedJob.id,
+            scrapeRunId: scrapeRun.id,
+            actorLabel: input.actorLabel ?? 'scout',
+            decision: {
+              ...decisionDraft,
+              actedAutomatically: shouldAutoApplyDecision ? decisionDraft.actedAutomatically : false,
+              resultingStatus,
+            },
+            previousStatus: existingJob.status,
           });
 
           await prisma.auditEvent.create({
@@ -186,7 +218,7 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
             jobUrl: normalized.sourceUrl ?? `source://${input.sourceKey}/${sourceRecord.id}`,
             jobDescriptionRaw: normalized.descriptionRaw,
             jobDescriptionClean: normalized.descriptionClean,
-            status: JobStatus.discovered,
+            status: decisionDraft.resultingStatus,
           },
         });
 
@@ -221,6 +253,14 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
           },
         });
 
+        await persistScoutDecision({
+          jobId: job.id,
+          scrapeRunId: scrapeRun.id,
+          actorLabel: input.actorLabel ?? 'scout',
+          decision: decisionDraft,
+          previousStatus: null,
+        });
+
         await prisma.auditEvent.createMany({
           data: [
             makeAuditEvent({
@@ -237,7 +277,7 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
               eventType: 'job.discovered',
               actorType: ActorType.agent,
               actorLabel: input.actorLabel ?? 'scout',
-              afterState: { status: JobStatus.discovered },
+              afterState: { status: decisionDraft.resultingStatus },
               payloadJson: {
                 scrapeRunId: scrapeRun.id,
                 sourceRecordId: sourceRecord.id,
@@ -322,6 +362,194 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
   }
 }
 
+async function persistScoutDecision(args: {
+  jobId: string;
+  scrapeRunId: string;
+  actorLabel: string;
+  previousStatus: JobStatus | null;
+  decision: ScoutDecisionDraft;
+}) {
+  const scoutDecision = await prisma.scoutDecision.upsert({
+    where: {
+      jobId_scrapeRunId: {
+        jobId: args.jobId,
+        scrapeRunId: args.scrapeRunId,
+      },
+    },
+    update: {
+      verdict: args.decision.verdict,
+      confidence: args.decision.confidence,
+      reasonsJson: args.decision.reasons as unknown as Prisma.InputJsonValue,
+      ambiguityFlagsJson: args.decision.ambiguityFlags as unknown as Prisma.InputJsonValue,
+      actedAutomatically: args.decision.actedAutomatically,
+      policyVersion: args.decision.policyVersion,
+    },
+    create: {
+      jobId: args.jobId,
+      scrapeRunId: args.scrapeRunId,
+      verdict: args.decision.verdict,
+      confidence: args.decision.confidence,
+      reasonsJson: args.decision.reasons as unknown as Prisma.InputJsonValue,
+      ambiguityFlagsJson: args.decision.ambiguityFlags as unknown as Prisma.InputJsonValue,
+      actedAutomatically: args.decision.actedAutomatically,
+      policyVersion: args.decision.policyVersion,
+    },
+  });
+
+  const auditEvents = [
+    makeAuditEvent({
+      entityType: 'job',
+      entityId: args.jobId,
+      eventType: 'scout.decision_recorded',
+      actorType: ActorType.agent,
+      actorLabel: args.actorLabel,
+      payloadJson: {
+        scrapeRunId: args.scrapeRunId,
+        scoutDecisionId: scoutDecision.id,
+        verdict: args.decision.verdict,
+        confidence: args.decision.confidence,
+        ambiguityFlags: args.decision.ambiguityFlags,
+        actedAutomatically: args.decision.actedAutomatically,
+        policyVersion: args.decision.policyVersion,
+      },
+    }),
+  ];
+
+  if (args.decision.actedAutomatically && args.previousStatus !== args.decision.resultingStatus) {
+    auditEvents.push(
+      makeAuditEvent({
+        entityType: 'job',
+        entityId: args.jobId,
+        eventType: args.decision.resultingStatus === JobStatus.shortlisted ? 'job.shortlisted' : 'job.archived',
+        actorType: ActorType.agent,
+        actorLabel: args.actorLabel,
+        beforeState: { status: args.previousStatus },
+        afterState: { status: args.decision.resultingStatus },
+        payloadJson: {
+          scrapeRunId: args.scrapeRunId,
+          scoutDecisionId: scoutDecision.id,
+          automatic: true,
+          verdict: args.decision.verdict,
+          confidence: args.decision.confidence,
+        },
+      }),
+    );
+  }
+
+  await prisma.auditEvent.createMany({
+    data: auditEvents,
+  });
+}
+
+function buildScoutDecisionDraft(
+  normalized: ReturnType<typeof normalizeScoutJob>,
+  score: ReturnType<typeof scoreScoutJob>,
+): ScoutDecisionDraft {
+  const title = normalized.normalizedTitle;
+  const isExactDataAnalyst = title.includes('data analyst');
+  const isAdjacentAnalyst =
+    title.includes('business analyst') ||
+    title.includes('product analyst') ||
+    title.includes('analytics analyst') ||
+    title.includes('bi analyst') ||
+    title.includes('business intelligence');
+
+  const ambiguityFlags: string[] = [];
+
+  if (!isExactDataAnalyst && isAdjacentAnalyst) {
+    ambiguityFlags.push('adjacent_analyst_title');
+  }
+
+  if (!isExactDataAnalyst && !isAdjacentAnalyst) {
+    ambiguityFlags.push('non_target_title');
+  }
+
+  if (!normalized.salaryText) {
+    ambiguityFlags.push('salary_missing');
+  }
+
+  if (score.fitScore >= 55 && score.fitScore < 72) {
+    ambiguityFlags.push('borderline_fit');
+  }
+
+  if (score.priorityScore >= 60 && score.priorityScore < 78) {
+    ambiguityFlags.push('borderline_priority');
+  }
+
+  if (score.risks.length >= 2) {
+    ambiguityFlags.push('high_risk_count');
+  }
+
+  const reasons = [...score.topReasons.slice(0, 3)];
+
+  if (isExactDataAnalyst) {
+    reasons.push('Exact data analyst title match.');
+  } else if (isAdjacentAnalyst) {
+    reasons.push('Adjacent analyst title needs human review.');
+  } else {
+    reasons.push('Title does not clearly match the target profile.');
+  }
+
+  if (!normalized.salaryText) {
+    reasons.push('Salary is missing, so upside is less certain.');
+  }
+
+  const shortlistConfidence = clamp(
+    0.56 + score.priorityScore / 240 + score.fitScore / 260 - ambiguityFlags.length * 0.08 - score.risks.length * 0.04,
+  );
+  const archiveConfidence = clamp(
+    0.48 + (100 - score.priorityScore) / 210 + (100 - score.fitScore) / 260 + score.risks.length * 0.06,
+  );
+
+  if (isExactDataAnalyst && score.priorityScore >= 78 && score.fitScore >= 72 && score.risks.length <= 1) {
+    const actedAutomatically = shortlistConfidence >= 0.85;
+    return {
+      verdict: 'shortlist',
+      confidence: shortlistConfidence,
+      reasons,
+      ambiguityFlags,
+      actedAutomatically,
+      resultingStatus: actedAutomatically ? JobStatus.shortlisted : JobStatus.discovered,
+      policyVersion: SCOUT_DECISION_POLICY_VERSION,
+    };
+  }
+
+  if (!isExactDataAnalyst && score.priorityScore <= 42 && score.fitScore <= 48) {
+    const actedAutomatically = archiveConfidence >= 0.85;
+    return {
+      verdict: 'archive',
+      confidence: archiveConfidence,
+      reasons: [...reasons, 'Low-priority mismatch against the initial narrow Scout profile.'],
+      ambiguityFlags,
+      actedAutomatically,
+      resultingStatus: actedAutomatically ? JobStatus.archived : JobStatus.discovered,
+      policyVersion: SCOUT_DECISION_POLICY_VERSION,
+    };
+  }
+
+  if (ambiguityFlags.length > 0 || score.priorityScore >= 68 || score.fitScore >= 65) {
+    return {
+      verdict: 'needs_human_review',
+      confidence: clamp(0.62 + score.priorityScore / 400 - ambiguityFlags.length * 0.03),
+      reasons: [...reasons, 'Ambiguity flags require human review before acting automatically.'],
+      ambiguityFlags,
+      actedAutomatically: false,
+      resultingStatus: JobStatus.discovered,
+      policyVersion: SCOUT_DECISION_POLICY_VERSION,
+    };
+  }
+
+  return {
+    verdict: 'defer',
+    confidence: clamp(0.52 + score.priorityScore / 500),
+    reasons: [...reasons, 'Not a strong enough match to auto-act, but not weak enough to auto-archive.'],
+    ambiguityFlags,
+    actedAutomatically: false,
+    resultingStatus: JobStatus.discovered,
+    policyVersion: SCOUT_DECISION_POLICY_VERSION,
+  };
+}
+
 function buildScoutRunQueryJson(input: RunScoutIngestionInput, triggerType: ScoutRunTriggerType) {
   const base = {
     searchTerm: input.searchTerm ?? null,
@@ -340,6 +568,10 @@ function buildScoutRunQueryJson(input: RunScoutIngestionInput, triggerType: Scou
     ...(input.queryJson as Record<string, unknown>),
     ...base,
   };
+}
+
+function clamp(value: number) {
+  return Math.max(0, Math.min(0.99, Number(value.toFixed(2))));
 }
 
 function getErrorMessage(error: unknown) {

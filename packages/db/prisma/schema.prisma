@@ -105,6 +105,13 @@ enum JobSourceRecordStatus {
   errored
 }
 
+enum ScoutDecisionVerdict {
+  shortlist
+  archive
+  defer
+  needs_human_review
+}
+
 model User {
   id          String   @id @default(cuid())
   email       String   @unique
@@ -159,6 +166,7 @@ model Job {
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
   scorecards          JobScorecard[]
+  scoutDecisions   ScoutDecision[]
   applications        Application[]
   sourceLinks         JobSourceLink[]
   notes               JobNote[]
@@ -202,6 +210,7 @@ model ScrapeRun {
   startedAt        DateTime             @default(now())
   completedAt      DateTime?
   sourceRecords    JobSourceRecord[]
+  scoutDecisions  ScoutDecision[]
 
   @@index([startedAt])
   @@index([triggerType, startedAt])
@@ -357,6 +366,25 @@ model PortalSession {
   lastSyncedAt       DateTime?
   sessionSummaryJson Json?
   notes              String?
+}
+
+model ScoutDecision {
+  id                String               @id @default(cuid())
+  jobId             String
+  job               Job                  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  scrapeRunId       String
+  scrapeRun         ScrapeRun            @relation(fields: [scrapeRunId], references: [id], onDelete: Cascade)
+  verdict           ScoutDecisionVerdict
+  confidence        Float
+  reasonsJson       Json
+  ambiguityFlagsJson Json?
+  actedAutomatically Boolean             @default(false)
+  policyVersion     String
+  createdAt         DateTime             @default(now())
+
+  @@unique([jobId, scrapeRunId])
+  @@index([jobId, createdAt])
+  @@index([scrapeRunId, createdAt])
 }
 
 model AuditEvent {

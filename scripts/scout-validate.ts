@@ -24,6 +24,18 @@ async function main() {
     idempotencyKey: buildScoutIdempotencyKey(provider, 'test'),
   });
 
+  const decisionSummary = await prisma.scoutDecision.groupBy({
+    by: ['verdict', 'actedAutomatically'],
+    where: { scrapeRunId: result.run.id },
+    _count: { _all: true },
+  });
+
+  const decisions = await prisma.scoutDecision.findMany({
+    where: { scrapeRunId: result.run.id },
+    orderBy: { createdAt: 'desc' },
+    take: 10,
+  });
+
   const jobs = await prisma.job.findMany({
     include: {
       company: true,
@@ -69,6 +81,19 @@ async function main() {
           dedupedCount: result.run.dedupedCount,
           errorSummaryJson: result.run.errorSummaryJson,
         },
+        decisionSummary: decisionSummary.map((item) => ({
+          verdict: item.verdict,
+          actedAutomatically: item.actedAutomatically,
+          count: item._count._all,
+        })),
+        decisions: decisions.map((decision) => ({
+          jobId: decision.jobId,
+          verdict: decision.verdict,
+          confidence: decision.confidence,
+          actedAutomatically: decision.actedAutomatically,
+          policyVersion: decision.policyVersion,
+          ambiguityFlagsJson: decision.ambiguityFlagsJson,
+        })),
         jobs: jobs.map((job) => ({
           id: job.id,
           title: job.title,

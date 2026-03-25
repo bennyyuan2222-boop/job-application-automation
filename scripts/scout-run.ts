@@ -54,6 +54,12 @@ async function main() {
     idempotencyKey,
   });
 
+  const decisionSummary = await prisma.scoutDecision.groupBy({
+    by: ['verdict', 'actedAutomatically'],
+    where: { scrapeRunId: run.id },
+    _count: { _all: true },
+  });
+
   console.log(
     JSON.stringify(
       {
@@ -82,6 +88,11 @@ async function main() {
           completedAt: run.completedAt ? run.completedAt.toISOString() : null,
           notes: run.notes,
         },
+        decisionSummary: decisionSummary.map((item) => ({
+          verdict: item.verdict,
+          actedAutomatically: item.actedAutomatically,
+          count: item._count._all,
+        })),
         reusedExistingRun,
         caveat: resolved.caveat ?? null,
         initialProfileDefaults: initialScoutProfile,
