@@ -1,9 +1,19 @@
 import { prisma } from '@job-ops/db';
 import { runScoutIngestion } from '../workers/scout/index.js';
-import { buildInitialScoutFixtureRunInput, initialScoutProfile } from './scout-profile.js';
+import { initialScoutProfile, isScoutProvider, type ScoutProvider } from './scout-profile.js';
+import { resolveScoutRunInput } from './scout-source-adapters.js';
 
 async function main() {
-  await runScoutIngestion(buildInitialScoutFixtureRunInput('test'));
+  const provider: ScoutProvider = isScoutProvider(process.env.SCOUT_PROVIDER ?? '')
+    ? (process.env.SCOUT_PROVIDER as ScoutProvider)
+    : 'fixture';
+
+  const resolved = await resolveScoutRunInput({
+    provider,
+    trigger: 'test',
+  });
+
+  await runScoutIngestion(resolved.runInput);
 
   const jobs = await prisma.job.findMany({
     include: {
@@ -31,7 +41,10 @@ async function main() {
   console.log(
     JSON.stringify(
       {
-        profile: initialScoutProfile,
+        initialProfileDefaults: initialScoutProfile,
+        provider,
+        profile: resolved.profile,
+        caveat: resolved.caveat ?? null,
         jobs: jobs.map((job) => ({
           id: job.id,
           title: job.title,

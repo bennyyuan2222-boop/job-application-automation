@@ -4,24 +4,36 @@ import type { RunScoutIngestionInput } from '../workers/scout/index.js';
 export const scoutRunTriggers = ['scheduled', 'manual', 'backfill', 'test'] as const;
 export type ScoutRunTrigger = (typeof scoutRunTriggers)[number];
 
+export const scoutProviders = ['fixture', 'jobspy-mcp'] as const;
+export type ScoutProvider = (typeof scoutProviders)[number];
+
 export const initialScoutProfile = Object.freeze({
-  provider: 'fixture',
   board: 'indeed',
-  sourceKey: 'fixture-jobspy-indeed',
   searchTerm: 'Data Analyst',
   searchLocation: 'New York City',
+  resultsWanted: 10,
+  hoursOld: 72,
+  countryIndeed: 'USA',
 } as const);
 
 export function isScoutRunTrigger(value: string): value is ScoutRunTrigger {
   return scoutRunTriggers.includes(value as ScoutRunTrigger);
 }
 
-export function getInitialScoutFixtureRecords(): RawScoutJobInput[] {
+export function isScoutProvider(value: string): value is ScoutProvider {
+  return scoutProviders.includes(value as ScoutProvider);
+}
+
+export function buildScoutSourceKey(provider: ScoutProvider): string {
+  return provider === 'fixture' ? 'fixture-jobspy-indeed' : 'jobspy-mcp-indeed';
+}
+
+export function getInitialScoutFixtureRecords(sourceKey = buildScoutSourceKey('fixture')): RawScoutJobInput[] {
   const nowIso = new Date().toISOString();
 
   return [
     {
-      sourceKey: initialScoutProfile.sourceKey,
+      sourceKey,
       sourceRecordId: 'nyc-data-analyst-1',
       sourceUrl: 'https://jobs.example.com/nyc-data-analyst-1',
       companyName: 'Northstar AI',
@@ -33,7 +45,7 @@ export function getInitialScoutFixtureRecords(): RawScoutJobInput[] {
       datePosted: nowIso,
     },
     {
-      sourceKey: initialScoutProfile.sourceKey,
+      sourceKey,
       sourceRecordId: 'nyc-data-analyst-2',
       sourceUrl: 'https://jobs.example.com/nyc-data-analyst-2',
       companyName: 'Signal Grid',
@@ -49,12 +61,14 @@ export function getInitialScoutFixtureRecords(): RawScoutJobInput[] {
 }
 
 export function buildInitialScoutFixtureRunInput(trigger: ScoutRunTrigger): RunScoutIngestionInput {
+  const sourceKey = buildScoutSourceKey('fixture');
+
   return {
-    sourceKey: initialScoutProfile.sourceKey,
+    sourceKey,
     searchTerm: initialScoutProfile.searchTerm,
     searchLocation: initialScoutProfile.searchLocation,
     actorLabel: `scout-${trigger}-fixture`,
-    notes: `provider=${initialScoutProfile.provider};board=${initialScoutProfile.board};trigger=${trigger}`,
-    records: getInitialScoutFixtureRecords(),
+    notes: `provider=fixture;board=${initialScoutProfile.board};trigger=${trigger}`,
+    records: getInitialScoutFixtureRecords(sourceKey),
   };
 }

@@ -1,8 +1,13 @@
 import { runScoutIngestion } from '../workers/scout/index.js';
-import { buildInitialScoutFixtureRunInput } from './scout-profile.js';
+import { resolveScoutRunInput } from './scout-source-adapters.js';
 
 async function main() {
-  await runScoutIngestion(buildInitialScoutFixtureRunInput('manual'));
+  const resolved = await resolveScoutRunInput({
+    provider: 'fixture',
+    trigger: 'manual',
+  });
+
+  await runScoutIngestion(resolved.runInput);
 }
 
 main().catch((error) => {

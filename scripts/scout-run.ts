@@ -1,20 +1,24 @@
 import { prisma } from '@job-ops/db';
 import { runScoutIngestion } from '../workers/scout/index.js';
 import {
-  buildInitialScoutFixtureRunInput,
   initialScoutProfile,
+  isScoutProvider,
   isScoutRunTrigger,
+  type ScoutProvider,
   type ScoutRunTrigger,
 } from './scout-profile.js';
+import { resolveScoutRunInput } from './scout-source-adapters.js';
 
 type ScoutRunCliOptions = {
   trigger: ScoutRunTrigger;
-  provider: 'fixture';
+  provider: ScoutProvider;
 };
 
 function parseArgs(argv: string[]): ScoutRunCliOptions {
   let trigger: ScoutRunTrigger = 'manual';
-  let provider: 'fixture' = 'fixture';
+  let provider: ScoutProvider = isScoutProvider(process.env.SCOUT_PROVIDER ?? '')
+    ? (process.env.SCOUT_PROVIDER as ScoutProvider)
+    : 'fixture';
 
   for (const arg of argv) {
     if (arg.startsWith('--trigger=')) {
@@ -28,8 +32,8 @@ function parseArgs(argv: string[]): ScoutRunCliOptions {
 
     if (arg.startsWith('--provider=')) {
       const value = arg.slice('--provider='.length);
-      if (value !== 'fixture') {
-        throw new Error(`Unsupported --provider value: ${value}. Only fixture is implemented right now.`);
+      if (!isScoutProvider(value)) {
+        throw new Error(`Unsupported --provider value: ${value}`);
       }
       provider = value;
       continue;
@@ -41,20 +45,16 @@ function parseArgs(argv: string[]): ScoutRunCliOptions {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-
-  if (options.provider !== 'fixture') {
-    throw new Error(`Unsupported provider: ${options.provider}`);
-  }
-
-  const run = await runScoutIngestion(buildInitialScoutFixtureRunInput(options.trigger));
+  const resolved = await resolveScoutRunInput(options);
+  const run = await runScoutIngestion(resolved.runInput);
 
   console.log(
     JSON.stringify(
       {
         mode: 'scheduled-entrypoint',
-        provider: options.provider,
+        provider: resolved.provider,
         trigger: options.trigger,
-        profile: initialScoutProfile,
+        profile: resolved.profile,
         run: {
           id: run.id,
           sourceKey: run.sourceKey,
@@ -68,7 +68,8 @@ async function main() {
           completedAt: run.completedAt ? run.completedAt.toISOString() : null,
           notes: run.notes,
         },
-        caveat: 'Fixture-backed entrypoint is live. Real JobSpy MCP fetching is still a separate next feature.',
+        caveat: resolved.caveat ?? null,
+        initialProfileDefaults: initialScoutProfile,
       },
       null,
       2,

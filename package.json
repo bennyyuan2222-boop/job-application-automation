@@ -27,7 +27,9 @@
     "scout:seed": "tsx scripts/scout-seed.ts",
     "scout:seed:local": "dotenv -e .env -- npm run scout:seed",
     "scout:run": "tsx scripts/scout-run.ts",
-    "scout:run:local": "dotenv -e .env -- npm run scout:run --"
+    "scout:run:local": "dotenv -e .env -- npm run scout:run --",
+    "scout:validate": "tsx scripts/scout-validate.ts",
+    "scout:validate:local": "dotenv -e .env -- npm run scout:validate"
   },
   "devDependencies": {
     "@types/node": "^22.15.18",
