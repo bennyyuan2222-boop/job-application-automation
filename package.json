@@ -25,7 +25,9 @@
     "db:seed": "npm run -w @job-ops/db seed",
     "db:seed:local": "dotenv -e .env -- npm run db:seed",
     "scout:seed": "tsx scripts/scout-seed.ts",
-    "scout:seed:local": "dotenv -e .env -- npm run scout:seed"
+    "scout:seed:local": "dotenv -e .env -- npm run scout:seed",
+    "scout:run": "tsx scripts/scout-run.ts",
+    "scout:run:local": "dotenv -e .env -- npm run scout:run --"
   },
   "devDependencies": {
     "@types/node": "^22.15.18",

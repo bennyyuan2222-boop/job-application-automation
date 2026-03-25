@@ -7,6 +7,7 @@ export type RunScoutIngestionInput = {
   searchTerm?: string;
   searchLocation?: string;
   actorLabel?: string;
+  notes?: string;
   records: RawScoutJobInput[];
 };
 
@@ -22,6 +23,7 @@ export async function runScoutIngestion(input: RunScoutIngestionInput) {
       },
       status: 'created',
       resultCount: input.records.length,
+      notes: input.notes ?? null,
     },
   });
 
