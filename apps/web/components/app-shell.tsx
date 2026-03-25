@@ -33,9 +33,11 @@ export function AppShell({ children, userEmail }: PropsWithChildren<{ userEmail:
             <p className="eyebrow">Signed in</p>
             <strong>{userEmail}</strong>
           </div>
-          <Link href="/logout" className="nav-link">
-            Sign out
-          </Link>
+          <form action="/logout" method="post">
+            <button type="submit" className="button-link secondary">
+              Sign out
+            </button>
+          </form>
         </header>
         <main className="content">{children}</main>
       </div>

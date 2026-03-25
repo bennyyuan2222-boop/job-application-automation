@@ -4,6 +4,10 @@ import { clearSession } from '../../lib/auth';
 import { sameOriginUrl } from '../../lib/redirects';
 
 export async function GET(request: NextRequest) {
+  return NextResponse.redirect(sameOriginUrl(request, '/'));
+}
+
+export async function POST(request: NextRequest) {
   await clearSession();
   return NextResponse.redirect(sameOriginUrl(request, '/login'));
 }
