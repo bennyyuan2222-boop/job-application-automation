@@ -7,12 +7,13 @@ _Last updated: 2026-03-25_
 
 Translate `specs/milestone-1-scout-automation-and-triage-v1.md` into an implementation-oriented checklist tied to the repo as it exists today.
 
-This is the build sheet for turning the current thin Scout vertical slice into a real scheduled ingestion lane using:
+This is the build sheet for turning the current thin Scout vertical slice into a real scheduled ingestion + triage lane using:
 - JobSpy MCP as the adapter path
 - Indeed as the first live source
 - Benny's `job-search-spec.md` as the broader preference source
 - an intentionally narrow active v1 search profile: `Data Analyst` in `New York City`
 - OpenClaw cron on Gateway as the v1 scheduler
+- a Scout decision pass that can `shortlist`, `archive`, `defer`, or `needs_human_review`
 - no heartbeat dependency for the first implementation pass
 
 ## Related docs
@@ -46,6 +47,17 @@ This is the build sheet for turning the current thin Scout vertical slice into a
 - `archived` means suppress forever in v1
 - repeated sightings may still update provenance/run history behind the scenes, but must not re-surface archived jobs automatically
 
+### Scout decision policy direction
+- Scout should run a post-ingest decision pass after deterministic fetch/normalize/dedupe completes.
+- Decision verdicts should be `shortlist`, `archive`, `defer`, or `needs_human_review`.
+- Ambiguous jobs should remain visible for review instead of being silently acted on.
+- Conservative auto-action is allowed in v1, but only with explicit confidence thresholds, ambiguity flags, and auditability.
+- Recommended initial policy shape:
+  - strong positive + no blocking ambiguity -> eligible for `shortlist`
+  - strong negative + no contradictory positives -> eligible for `archive`
+  - promising but mixed signal -> `needs_human_review`
+  - weak/incomplete signal -> `defer`
+
 ## Current repo snapshot
 
 Relevant files that already exist:
@@ -59,21 +71,23 @@ Relevant files that already exist:
 - `scripts/scout-validate.ts`
 
 Current Scout strengths:
-- canonical `Job`, `ScrapeRun`, `JobSourceRecord`, `JobSourceLink`, `JobScorecard`, `AuditEvent` records exist
+- canonical `Job`, `ScrapeRun`, `JobSourceRecord`, `JobSourceLink`, `JobScorecard`, and `AuditEvent` records exist
 - normalization, work-mode inference, and heuristic scoring exist in `packages/domain/src/scout.ts`
 - a working ingestion flow exists in `workers/scout/index.ts`
-- Inbox/Shortlist UI already reads real DB-backed jobs
+- a stable scheduled entrypoint exists via `scripts/scout-run.ts` and `scripts/scout-run-gateway.sh`
+- a real JobSpy MCP adapter seam exists and has been validated against the host-side endpoint
+- Gateway cron is already wired on the current host
+- Scout run ops visibility exists via `/scout-runs`
 
 Current Scout gaps:
-- no OpenClaw/Gateway cron job definition or stable scheduled entrypoint exists yet
-- no real JobSpy MCP adapter exists
-- current ingestion receives records directly rather than fetching them from a source adapter
-- run state is too thin for real ops (`created/completed/failed` only)
-- no explicit trigger type on runs
+- run state is still too thin for real ops (`created/completed/failed` only)
+- trigger semantics are still partially hidden in notes rather than first-class structured fields
+- no persisted `ScoutDecision` model exists yet
+- no explicit ambiguity handling / human-review routing layer exists yet
 - no run idempotency key for duplicate scheduler delivery
-- no Scout run history page / ops surface
+- no feedback/override capture comparing Scout recommendations to Benny’s final actions
 - no test harness directories currently exist in the repo
-- `packages/read-models` exists, but Scout queue/run read logic still lives in `apps/web/lib/queries.ts`
+- `packages/read-models` exists, but Scout queue/run read logic still lives partially in `apps/web/lib/queries.ts`
 
 ## Critical runtime note
 
@@ -105,7 +119,9 @@ Milestone 1 is done when all of these are true:
 - repeated runs dedupe correctly
 - archived jobs stay suppressed forever unless Benny changes policy later
 - canonical jobs retain provenance to raw source records
-- Inbox and Shortlist are driven by Scout-created jobs
+- Scout decisions are persisted with verdict/confidence/reasons/ambiguity fields
+- ambiguous jobs remain human-reviewable instead of being silently acted on
+- Inbox and Shortlist are driven by Scout-created jobs and Scout recommendations
 - recent Scout runs are visible without shell access
 - failures and partial runs are auditable and diagnosable
 - the Scout path has unit + integration + smoke coverage
@@ -115,7 +131,7 @@ Milestone 1 is done when all of these are true:
 ## P0 — Schema hardening
 
 ### Goal
-Upgrade the current Scout data model so it can support real scheduled ingestion, run telemetry, and partial failure handling.
+Upgrade the current Scout data model so it can support real scheduled ingestion, run telemetry, partial failure handling, and persisted Scout decisions.
 
 ### Proposed schema deltas relative to current `packages/db/prisma/schema.prisma`
 
@@ -200,6 +216,35 @@ Recommended:
 
 This is useful once scoring rules change over time.
 
+#### 7. Add `ScoutDecision`
+Recommended enums:
+- `ScoutDecisionVerdict`
+  - `shortlist`
+  - `archive`
+  - `defer`
+  - `needs_human_review`
+- `ScoutDecisionSource`
+  - `heuristic`
+  - `agent`
+  - `hybrid`
+
+Recommended fields:
+- `jobId`
+- `scrapeRunId?`
+- `verdict`
+- `decisionSource`
+- `confidence`
+- `reasonSummary?`
+- `reasonsJson`
+- `ambiguityFlagsJson`
+- `policyVersion`
+- `actedAutomatically @default(false)`
+- timestamps
+
+Recommended indexes:
+- `@@index([jobId, createdAt])`
+- `@@index([scrapeRunId, createdAt])`
+
 ### Schema checklist
 
 - [ ] Update enums in `packages/db/prisma/schema.prisma`
@@ -207,6 +252,7 @@ This is useful once scoring rules change over time.
 - [ ] Add run telemetry fields to `ScrapeRun`
 - [ ] Add error/dedupe helper fields to `JobSourceRecord`
 - [ ] Add `scorerVersion` to `JobScorecard`
+- [ ] Add `ScoutDecision` + enums for verdict/source
 - [ ] Generate migration in `packages/db/prisma/migrations/`
 - [ ] Run local migration and seed successfully
 - [ ] Re-run build/typecheck after migration
@@ -216,7 +262,7 @@ This is useful once scoring rules change over time.
 ## P1 — Domain hardening
 
 ### Goal
-Make Scout normalization, dedupe, scoring, and run bookkeeping explicit and reusable.
+Make Scout normalization, dedupe, scoring, decisioning, and run bookkeeping explicit and reusable.
 
 ### Files to edit
 
@@ -239,6 +285,22 @@ Recommended exported helpers:
 - `classifyScoutMatch(...)`
 - `summarizeScoutRun(...)`
 
+#### Create: `packages/domain/src/scout-triage.ts`
+Owns the post-ingest Scout decision logic.
+
+Recommended additions:
+- verdict classification helpers
+- ambiguity-flag generation
+- conservative auto-action eligibility rules
+- policy/version constants
+- decision-summary helper types
+
+Recommended exported helpers:
+- `decideScoutVerdict(...)`
+- `classifyScoutAmbiguities(...)`
+- `shouldAutoApplyScoutDecision(...)`
+- `summarizeScoutDecision(...)`
+
 #### `packages/domain/src/audit.ts`
 Add or formalize Scout event constants/helpers so event names stop drifting ad hoc.
 
@@ -249,14 +311,19 @@ Recommended Scout event set:
 - `scout.run_failed`
 - `job.discovered`
 - `job.source_record_linked`
+- `scout.decision_created`
+- `scout.decision_auto_applied`
+- `scout.decision_overridden`
 - `job.shortlisted`
 - `job.archived`
 
 ### Domain checklist
 
 - [ ] Expand `packages/domain/src/scout.ts` to cover run/dedupe helper logic, not just normalization and scoring
+- [ ] Create `packages/domain/src/scout-triage.ts` for decision verdicts / ambiguity / auto-action policy
 - [ ] Add stable event-name helpers/constants in `packages/domain/src/audit.ts`
 - [ ] Add a `SCOUT_SCORER_VERSION` constant
+- [ ] Add a `SCOUT_TRIAGE_POLICY_VERSION` constant
 - [ ] Ensure dedupe decisions are explainable as structured values, not only implied by SQL lookups
 - [ ] Preserve raw-source vs canonical-job separation in types
 
@@ -265,7 +332,7 @@ Recommended Scout event set:
 ## P2 — Worker/service split
 
 ### Goal
-Move Scout from a single inline loop into a layered service shape that can support cron, manual runs, and future backfills.
+Move Scout from a single inline loop into a layered service shape that can support cron, manual runs, future backfills, and a post-ingest Scout decision pass.
 
 ### Current state
 `workers/scout/index.ts` currently:
@@ -274,6 +341,7 @@ Move Scout from a single inline loop into a layered service shape that can suppo
 - normalizes/scorers inline
 - writes DB records directly
 - completes the run
+- does not yet persist a separate Scout decision layer
 
 That is fine for a thin slice, but too coupled for scheduled production use.
 
@@ -287,6 +355,7 @@ Recommended new files:
 - `workers/scout/src/adapters/jobspy-mcp.ts`
 - `workers/scout/src/types.ts`
 - `workers/scout/src/idempotency.ts`
+- `workers/scout/src/decision.ts`
 
 ### Responsibility split
 
@@ -310,8 +379,16 @@ Owns:
 - capturing `JobSourceRecord`s
 - deduping into canonical `Job`
 - writing `JobScorecard`s
+- invoking the Scout decision pass for candidate jobs
 - emitting audit events
 - producing run counts/status
+
+#### `workers/scout/src/decision.ts`
+Owns:
+- selecting candidate jobs for decisioning after ingest
+- persisting `ScoutDecision` rows
+- deciding whether safe auto-actions should be applied
+- recording decision/override audit events
 
 #### `workers/scout/src/idempotency.ts`
 Owns:
@@ -324,8 +401,10 @@ Owns:
 - [ ] Move current ingestion logic out of `workers/scout/index.ts`
 - [ ] Build a JobSpy MCP adapter module with Indeed as the first board
 - [ ] Introduce adapter boundary types so future sources are additive
+- [ ] Add a dedicated decision module that persists `ScoutDecision` rows after ingest
 - [ ] Add idempotency-key generation/check logic for scheduled runs
 - [ ] Emit run-start / run-complete / run-fail audit events
+- [ ] Emit Scout decision / auto-apply / override audit events
 - [ ] Mark partial runs as `partial` rather than pretending they completed cleanly
 - [ ] Keep `workers/scout/index.ts` as a stable export shim
 
@@ -357,6 +436,7 @@ Recommended output shape:
 - trigger type
 - source/board
 - counts/status summary
+- Scout decision summary counts (for example shortlisted / archived / needs_human_review / deferred)
 
 #### Optional create: `scripts/scout-health.ts`
 Purpose:
@@ -413,6 +493,7 @@ Move Scout query logic into `packages/read-models` so `apps/web` stops becoming 
 Move in:
 - Inbox queries
 - Shortlist queries
+- Scout recommendation / human-review queue queries
 - Scout run summary queries
 - optional run-detail query
 
@@ -424,6 +505,7 @@ Add schemas for:
 - `scoutRunSummary`
 - `scoutRunDetail`
 - `scoutRunCounts`
+- `scoutDecisionSummary`
 
 #### Edit: `apps/web/lib/queries.ts`
 Short-term options:
@@ -455,7 +537,9 @@ Create:
 
 Recommended unit-test files:
 - `packages/domain/src/scout.test.ts`
+- `packages/domain/src/scout-triage.test.ts`
 - `workers/scout/src/service.test.ts`
+- `workers/scout/src/decision.test.ts`
 - `workers/scout/src/jobspy-mcp-adapter.test.ts`
 
 ### Fixture sets to create
@@ -484,14 +568,24 @@ Cover:
 - missing URL
 - very thin description
 
+#### Fixture set D — ambiguous triage cases
+Cover:
+- title looks weak but description looks strong
+- location mismatch with remote/hybrid hints
+- promising role with incomplete compensation/seniority signal
+- archived-like reappearance with changed details
+
 ### Test checklist
 
 - [ ] Create `tests/fixtures/scout/` with realistic adapter payloads
 - [ ] Add domain tests for normalization and dedupe helpers
 - [ ] Add worker/service tests for run bookkeeping and partial failure handling
 - [ ] Add adapter-mapping tests for JobSpy MCP -> canonical record translation
+- [ ] Add decision tests for verdict/confidence/ambiguity classification
 - [ ] Add an integration test covering the initial narrow profile (`Data Analyst`, `New York City`, `indeed`)
 - [ ] Add an integration test that archived jobs stay suppressed on repeat sightings
+- [ ] Add an integration test that ambiguous jobs remain human-reviewable
+- [ ] Add an integration test that high-confidence jobs can auto-route conservatively
 - [ ] Add at least one integration test that replays the same run twice and asserts no duplicate job creation
 - [ ] Add at least one manual smoke script for local validation
 
@@ -500,6 +594,9 @@ Cover:
 - [ ] Trigger a manual Scout run against the initial narrow live profile (`Data Analyst`, `New York City`, `indeed`)
 - [ ] Trigger the same run twice and verify dedupe counts increase instead of job creation
 - [ ] Archive one discovered job, trigger another matching run, and verify the archived job stays suppressed
+- [ ] Confirm fresh jobs get Scout decisions with verdict/confidence/reasons
+- [ ] Confirm at least one ambiguous job remains human-reviewable rather than silently auto-acted on
+- [ ] Confirm a high-confidence job can auto-route conservatively if policy is enabled
 - [ ] Confirm new jobs appear in Inbox
 - [ ] Shortlist one job and confirm it appears in Shortlist
 - [ ] Open the Scout run history page and confirm counts/status are visible
@@ -514,6 +611,7 @@ Cover:
 | `packages/db/prisma/schema.prisma` | edit | add trigger/status/count/error fields for real Scout ops |
 | `packages/db/prisma/migrations/*` | create | persist schema changes |
 | `packages/domain/src/scout.ts` | edit | canonical normalization/dedupe/run-summary helpers |
+| `packages/domain/src/scout-triage.ts` | create | Scout verdict/confidence/ambiguity policy helpers |
 | `packages/domain/src/audit.ts` | edit | stable Scout event taxonomy |
 | `workers/scout/index.ts` | edit | keep as thin export shim |
 | `workers/scout/src/index.ts` | create | public worker/service exports |
@@ -521,13 +619,14 @@ Cover:
 | `workers/scout/src/adapters/jobspy-mcp.ts` | create | JobSpy MCP + Indeed adapter |
 | `workers/scout/src/types.ts` | create | local worker types/input contracts |
 | `workers/scout/src/idempotency.ts` | create | stable scheduled-run idempotency key logic |
+| `workers/scout/src/decision.ts` | create | persist Scout decisions and conservative auto-actions |
 | `scripts/scout-run.ts` | create | stable Scout entrypoint for OpenClaw/Gateway cron |
 | `scripts/scout-health.ts` | optional create | lightweight Scout run health summary for heartbeat/debugging |
 | `apps/web/app/api/internal/scout/run/route.ts` | optional create | internal/manual/future-hosted trigger path |
 | `apps/web/app/(app)/jobs/actions.ts` | edit | keep UI-triggered runs aligned with core service path |
 | `apps/web/app/(app)/scout-runs/page.tsx` | create | minimal run ops surface |
 | `packages/contracts/src/index.ts` | edit | add run summary/detail schemas |
-| `packages/read-models/src/scout.ts` | create | Scout-specific queue/run read models |
+| `packages/read-models/src/scout.ts` | create | Scout-specific queue/run/decision read models |
 | `packages/read-models/src/index.ts` | edit | export Scout read models |
 | `apps/web/lib/queries.ts` | edit | delegate Scout reads to package-level read models |
 | `scripts/scout-seed.ts` | edit | keep as sample/dev path only |
@@ -540,13 +639,14 @@ Cover:
 ## Recommended build order
 
 1. Schema delta + migration
-2. Domain helper expansion
-3. Worker split into adapter/service/idempotency layers
-4. Gateway cron entrypoint + scheduled job wiring
-5. Read-model extraction
-6. Scout run ops page
-7. Tests + smoke scripts
-8. Gateway cron smoke validation
+2. Domain helper expansion for scoring + Scout triage decisions
+3. Worker split into adapter/service/idempotency/decision layers
+4. Persist Scout decisions + conservative auto-action rules
+5. Read-model extraction for Scout queue + recommendation views
+6. Gateway cron entrypoint + scheduled job wiring
+7. Scout run ops page + decision visibility
+8. Tests + smoke scripts
+9. Gateway cron smoke validation
 
 ## Exit check
 
@@ -556,8 +656,12 @@ Do not call Milestone 1 complete until all boxes are true:
 - [ ] the initial live profile is `Data Analyst` in `New York City`
 - [ ] duplicate scheduled delivery is safe enough
 - [ ] archived jobs remain suppressed on repeat sightings
+- [ ] Scout decisions are persisted with structured verdict/confidence/reasons/ambiguity fields
+- [ ] ambiguous jobs remain human-reviewable
+- [ ] conservative auto-actions are auditable and policy-versioned
 - [ ] Scout run history is visible in-app
 - [ ] partial failure handling is real
 - [ ] dedupe is explainable
 - [ ] at least one integration test covers rerun/dedupe behavior
+- [ ] at least one integration test covers Scout decision routing behavior
 - [ ] at least one manual smoke run has been performed from the Gateway/host execution path

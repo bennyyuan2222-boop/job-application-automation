@@ -33,7 +33,9 @@
     "scout:run:gateway:scheduled": "bash scripts/scout-run-gateway.sh --trigger=scheduled",
     "scout:run:gateway:backfill": "bash scripts/scout-run-gateway.sh --trigger=backfill",
     "scout:validate": "tsx scripts/scout-validate.ts",
-    "scout:validate:local": "dotenv -e .env -- npm run scout:validate"
+    "scout:validate:local": "dotenv -e .env -- npm run scout:validate",
+    "scout:feedback:validate": "tsx scripts/scout-feedback-validate.ts",
+    "scout:feedback:validate:local": "dotenv -e .env -- npm run scout:feedback:validate"
   },
   "devDependencies": {
     "@types/node": "^22.15.18",

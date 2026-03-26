@@ -24,7 +24,7 @@ This doc is intentionally practical. It is not a philosophical roadmap; it is a 
 
 The real critical path is:
 
-1. **Scout real ingestion + cron + run telemetry**
+1. **Scout real ingestion + cron + run telemetry + decision pass**
 2. **Needle durable tailored artifact contract (markdown + PDF)**
 3. **Latch structured answers + reusable profile answers + readiness**
 4. **Submit Review packet freeze + dirty-state + submission recording**
@@ -39,7 +39,7 @@ If any of these are skipped or done out of order, the later milestone becomes ei
 ```text
 Repo-wide engineering conventions
   ├─> Milestone 1 (Scout automation + triage backbone)
-  │      └─> unlocks real shortlisted jobs for downstream use
+  │      └─> unlocks real shortlisted jobs plus structured Scout triage decisions for downstream use
   ├─> Milestone 2 (Needle tailoring system)
   │      └─> unlocks approved tailored resume + PDF artifact
   ├─> Milestone 3 (Latch application ops)
@@ -125,6 +125,7 @@ Current note:
 - JobSpy MCP adapter boundary
 - Indeed first-source implementation
 - OpenClaw/Gateway cron scheduling path
+- Scout decision pass with ambiguity handling
 - run idempotency strategy
 - run telemetry and partial-failure handling
 - minimal run-ops UI
@@ -139,6 +140,8 @@ Until this lands, the product is still downstreaming from demo/manual seed data 
 ### Unlocks
 - real Inbox population
 - real Shortlist creation
+- conservative auto-shortlist / auto-archive behavior where policy allows
+- a human-reviewable path for ambiguous jobs
 - trustworthy backlog for Needle work
 
 ---
@@ -224,7 +227,7 @@ Browser automation is only safe once the product knows:
 
 | Milestone | Hard inputs required | Main outputs produced | Blocks if missing |
 |---|---|---|---|
-| M1 Scout | repo conventions, DB migrations, cron protection, adapter transport | real jobs, provenance, scorecards, shortlistable queue | M2 lacks trustworthy real pipeline input |
+| M1 Scout | repo conventions, DB migrations, cron protection, adapter transport | real jobs, provenance, scorecards, Scout decisions, shortlistable/reviewable queue | M2 lacks trustworthy real pipeline input and Scout cannot intelligently route ambiguous jobs |
 | M2 Needle | shortlisted jobs, resume inventory, artifact path strategy | tailored runs, selected base logic, approved tailored resume + PDF | M3 lacks stable resume artifact contract |
 | M3 Latch | approved tailored resume, application lifecycle, readiness engine | profile answers, application answers, attachments, applying queue | M4 cannot freeze a real packet; M5 lacks canonical answers |
 | M4 Submit Review | M3 packet semantics, portal URL/session tracking | frozen packet, dirty-state, manual submission record | M5 lacks clean stopping boundary |
@@ -340,6 +343,8 @@ Impact:
 - real adapter path exists
 - reruns are safe
 - run telemetry is visible
+- Scout decision persistence exists
+- ambiguous jobs are routed intentionally rather than silently buried
 
 ### Do not exit M2 until:
 - approved tailored resume has a durable PDF artifact

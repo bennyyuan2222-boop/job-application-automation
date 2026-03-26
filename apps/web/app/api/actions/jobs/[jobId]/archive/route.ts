@@ -1,47 +1,83 @@
-import { revalidatePath } from 'next/cache';
-import { ActorType, prisma } from '@job-ops/db';
+import { NextResponse } from 'next/server';
+import { ActorType, JobStatus, prisma } from '@job-ops/db';
 import { makeAuditEvent } from '@job-ops/domain';
-import { NextRequest, NextResponse } from 'next/server';
 
-import { requireRouteSession } from '../../../../../../lib/route-auth';
-import { sameOriginUrl } from '../../../../../../lib/redirects';
+export async function POST(request: Request, context: any) {
+  const params = await context.params;
 
-export const dynamic = 'force-dynamic';
+  await prisma.$transaction(async (tx: any) => {
+    const job = await tx.job.findUnique({
+      where: { id: params.jobId },
+      include: {
+        scoutDecisions: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
+    });
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ jobId: string }> },
-) {
-  const auth = await requireRouteSession(request);
-  if (!auth.ok) return auth.response;
+    if (!job) {
+      throw new Error(`Job not found: ${params.jobId}`);
+    }
 
-  const { session } = auth;
+    const latestDecision = job.scoutDecisions?.[0] ?? null;
+    const previousStatus = job.status;
 
-  const { jobId } = await params;
-  const job = await prisma.job.findUnique({ where: { id: jobId } });
-  if (!job) {
-    return NextResponse.redirect(sameOriginUrl(request, '/shortlist'));
-  }
+    await tx.job.update({
+      where: { id: params.jobId },
+      data: { status: JobStatus.archived },
+    });
 
-  await prisma.$transaction(async (tx) => {
-    await tx.job.update({ where: { id: jobId }, data: { status: 'archived' } });
-    await tx.auditEvent.create({
-      data: makeAuditEvent({
-        entityType: 'job',
-        entityId: jobId,
-        eventType: 'job.archived',
-        actorType: ActorType.user,
-        actorLabel: session.email,
-        beforeState: { status: job.status },
-        afterState: { status: 'archived' },
-      }),
+    const feedbackType = !latestDecision
+      ? 'manual_only'
+      : String(latestDecision.verdict) === 'archive'
+        ? 'agree'
+        : 'override';
+
+    const feedback = await tx.scoutDecisionFeedback.create({
+      data: {
+        jobId: job.id,
+        scoutDecisionId: latestDecision?.id ?? null,
+        actionTaken: 'archive',
+        feedbackType,
+        actorLabel: 'benny-manual',
+      },
+    });
+
+    await tx.auditEvent.createMany({
+      data: [
+        makeAuditEvent({
+          entityType: 'job',
+          entityId: job.id,
+          eventType: 'job.archived',
+          actorType: ActorType.user,
+          actorLabel: 'benny-manual',
+          beforeState: { status: previousStatus },
+          afterState: { status: JobStatus.archived },
+          payloadJson: {
+            source: 'manual_inbox_action',
+            scoutDecisionId: latestDecision?.id ?? null,
+            feedbackId: feedback.id,
+          },
+        }),
+        makeAuditEvent({
+          entityType: 'job',
+          entityId: job.id,
+          eventType: 'scout.feedback_recorded',
+          actorType: ActorType.user,
+          actorLabel: 'benny-manual',
+          payloadJson: {
+            actionTaken: 'archive',
+            feedbackType,
+            scoutDecisionId: latestDecision?.id ?? null,
+            scoutVerdict: latestDecision?.verdict ?? null,
+            scoutConfidence: latestDecision?.confidence ?? null,
+            feedbackId: feedback.id,
+          },
+        }),
+      ],
     });
   });
 
-  revalidatePath('/');
-  revalidatePath('/inbox');
-  revalidatePath('/shortlist');
-  revalidatePath('/activity');
-
-  return NextResponse.redirect(sameOriginUrl(request, '/shortlist'));
+  return NextResponse.redirect(new URL('/inbox', request.url));
 }

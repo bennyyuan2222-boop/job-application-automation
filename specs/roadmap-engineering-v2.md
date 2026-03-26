@@ -31,7 +31,8 @@ The engineering plan should start from the repo that actually exists, not from a
 
 Observed realities:
 - `packages/db/prisma/schema.prisma` already contains the core models for jobs, applications, resumes, tailoring runs, attachments, portal sessions, and audit events
-- `workers/scout/index.ts` exists, but still combines adapterless ingestion + normalization + dedupe + score + DB writes inline
+- the repo now has a stable Scout entrypoint (`scripts/scout-run.ts`), Gateway wrapper (`scripts/scout-run-gateway.sh`), and a provider seam in `scripts/scout-source-adapters.ts`
+- `workers/scout/index.ts` still combines too much ingestion + normalization + dedupe + score + DB write logic inline, and it does not yet persist a separate Scout decision layer
 - `workers/needle/src/service.ts` exists and already handles generation / approve / edits-requested / pause
 - there is not yet a real `workers/latch` implementation package in the repo
 - `packages/read-models` exists, but many queue/detail queries still live in `apps/web/lib/queries.ts`
@@ -61,6 +62,7 @@ That means the canonical entities remain Prisma-model-first names such as:
 - `AuditEvent`
 
 New recommended models follow the same style:
+- `ScoutDecision`
 - `ProfileAnswer`
 - `SubmitReviewSnapshot`
 - `SubmissionRecord`
@@ -91,6 +93,10 @@ These are for:
 ### 3. Worker/service convention
 
 Long-running logic should not live in route handlers.
+
+For Scout specifically, keep the layers separate:
+- deterministic ingest = fetch, normalize, dedupe, provenance, scorecards
+- decision pass = verdict, confidence, ambiguity flags, conservative auto-actions
 
 Recommended layering:
 - `apps/web` — auth, UI, route wiring, thin orchestration
@@ -181,6 +187,25 @@ Expand `status` enum to include:
 Add:
 - `scorerVersion`
 
+#### `ScoutDecision`
+Add a new model with at least:
+- `jobId`
+- `scrapeRunId?`
+- `verdict` (`shortlist | archive | defer | needs_human_review`)
+- `decisionSource` (`heuristic | agent | hybrid`)
+- `confidence`
+- `reasonSummary?`
+- `reasonsJson`
+- `ambiguityFlagsJson`
+- `policyVersion`
+- `actedAutomatically`
+- timestamps
+
+Purpose:
+- persist what Scout recommended
+- preserve why Scout recommended it
+- distinguish human review from automatic action
+
 ## Proposed entrypoint/file plan
 
 ### Existing files to keep using
@@ -193,6 +218,8 @@ Add:
 - `workers/scout/src/service.ts`
 - `workers/scout/src/adapters/jobspy-mcp.ts`
 - `workers/scout/src/idempotency.ts`
+- `workers/scout/src/decision.ts`
+- `packages/domain/src/scout-triage.ts`
 - `packages/read-models/src/scout.ts`
 - `scripts/scout-run.ts`
 - `scripts/scout-health.ts` (optional)
@@ -237,7 +264,15 @@ Owns:
 - source-record capture
 - job dedupe/create/update
 - scorecard writes
+- invoking the Scout decision pass for candidate jobs
 - audit events
+
+### `workers/scout/src/decision.ts`
+Owns:
+- selecting candidate jobs for decisioning after ingest
+- persisting `ScoutDecision`
+- applying conservative auto-shortlist / auto-archive actions when policy allows
+- preserving ambiguous jobs for human review
 
 ### `packages/domain/src/scout.ts`
 Owns:
@@ -246,6 +281,13 @@ Owns:
 - dedupe key generation
 - score policy
 - pure match classification helpers
+
+### `packages/domain/src/scout-triage.ts`
+Owns:
+- verdict classification helpers
+- ambiguity-flag generation
+- confidence threshold rules
+- auto-action eligibility
 
 ## Feature test cases
 
@@ -256,15 +298,19 @@ Owns:
 | Run bookkeeping | creates run with correct trigger type; transitions `created -> fetching -> processing -> completed/partial/failed` correctly |
 | Idempotency | duplicate scheduler delivery does not create duplicate run effects for the same idempotency window |
 | Dedupe | exact rerun creates no duplicate job; same job with minor title punctuation changes links instead of duplicating |
+| Scout decisioning | fresh jobs receive `ScoutDecision` rows with verdict/confidence/reasons; strong positive/negative cases can auto-route conservatively |
+| Ambiguity handling | gray-zone cases persist `needs_human_review` or `defer` with ambiguity flags rather than disappearing silently |
 | Partial failure | one bad record does not poison the whole run; run is marked `partial` with counts/errors |
 | Heartbeat monitoring | if enabled, heartbeat reports recent Scout run health/summaries without executing the ingest path |
-| Queue read models | discovered jobs appear in Inbox; shortlisted jobs move to Shortlist; archived jobs disappear from active queue |
+| Queue read models | discovered jobs appear in Inbox with recommendation metadata; shortlisted jobs move to Shortlist; archived jobs disappear from active queue |
 
 ## Non-obvious engineering note
 
 **OpenClaw cron on Gateway is the preferred v1 scheduler because it runs next to the JobSpy MCP access path.**
 Heartbeat should be used for monitoring/summaries, not as the primary fetch loop.
 If a hosted scheduler is desired later, add it only after the JobSpy transport is reachable from that runtime.
+
+The equally important architectural rule is this: **Scout should become the triage brain layered on top of deterministic ingest, not just a shell wrapper around fetch.**
 
 ---
 
@@ -707,6 +753,8 @@ These values should exist as env/config rather than hardcoded source assumptions
 - initial active search profile: role/search term `Data Analyst`, location `New York City`
 - initial schedule: weekdays at `8:00 AM America/New_York`, plus Sunday `6:00 PM America/New_York` for backfill
 - archive policy: `archived` means suppress forever
+- Scout triage policy/version config (for example `SCOUT_TRIAGE_POLICY_VERSION`)
+- optional confidence threshold config for shortlist/archive/human-review routing
 
 ### Heartbeat (optional Scout monitoring)
 - no heartbeat dependency is required for the first Scout implementation pass

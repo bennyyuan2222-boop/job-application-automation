@@ -14,14 +14,15 @@ This doc is the roadmap index. It points to the detailed milestone specs and def
 The intended end-state workflow is:
 
 1. Scout ingests jobs on a schedule.
-2. Benny reviews and shortlists good opportunities.
-3. Needle assesses shortlisted jobs against resume truth and generates tailored drafts.
-4. Benny reviews and approves the tailored resume.
-5. Latch prepares the application packet, structured answers, and attachment state.
-6. Latch fills supported form fields and uploads the correct resume in the live portal.
-7. Benny performs the real final review on the actual application URL.
-8. Benny clicks submit.
-9. The system records the submission and preserves the relevant audit trail.
+2. Scout runs a triage decision pass over new or materially changed jobs and can auto-shortlist, auto-archive, defer, or route to human review when policy/confidence permits.
+3. Benny reviews shortlisted or ambiguous opportunities and overrides Scout when needed.
+4. Needle assesses shortlisted jobs against resume truth and generates tailored drafts.
+5. Benny reviews and approves the tailored resume.
+6. Latch prepares the application packet, structured answers, and attachment state.
+7. Latch fills supported form fields and uploads the correct resume in the live portal.
+8. Benny performs the real final review on the actual application URL.
+9. Benny clicks submit.
+10. The system records the submission and preserves the relevant audit trail.
 
 ## Relationship to existing docs
 
@@ -37,6 +38,7 @@ Earlier concise lane docs:
 
 Detailed roadmap docs introduced by this milestone pack:
 - `specs/milestone-1-scout-automation-and-triage-v1.md`
+- `specs/scout-decision-pass-v1.md`
 - `specs/milestone-2-needle-tailoring-system-v1.md`
 - `specs/milestone-3-latch-application-ops-v1.md`
 - `specs/milestone-4-submit-review-and-recording-v1.md`
@@ -60,7 +62,7 @@ This milestone is already covered by the Phase 1 docs and does not need a separa
 
 ### Milestone 1 — Scout automation and triage backbone
 Primary outcome:
-- jobs arrive automatically and land in canonical DB-backed Inbox/Shortlist queues with provenance, dedupe, and scoring
+- jobs arrive automatically, land in canonical DB-backed Scout queues with provenance/dedupe/scoring, and receive structured Scout triage decisions with ambiguity handling and conservative auto-actions
 
 Detailed doc:
 - `specs/milestone-1-scout-automation-and-triage-v1.md`
@@ -115,7 +117,7 @@ Real ingestion, tailoring generation, readiness recalculation, and browser work 
 
 ### 4. Every lane needs a visible handoff contract
 Each lane must produce a clean artifact for the next lane:
-- Scout -> canonical job + scorecard + provenance
+- Scout -> canonical job + scorecard + decision verdict/confidence + ambiguity flags + provenance
 - Needle -> approved tailored resume + rationale + risk summary
 - Latch -> ready-to-review application packet + blocker/warning summary
 - Submit Review -> frozen packet + manual confirmation + submitted record
@@ -167,7 +169,7 @@ These apply to all milestone implementations.
 
 ## Recommended global build sequence
 
-1. Finish Milestone 1 enough that real jobs enter the system automatically.
+1. Finish Milestone 1 enough that real jobs enter the system automatically and receive Scout decisions.
 2. Finish Milestone 2 enough that a shortlisted job reliably becomes a reviewable tailored draft.
 3. Finish Milestone 3 enough that an approved resume becomes a disciplined application workspace.
 4. Finish Milestone 4 enough that the human submit boundary and submission record are real.
@@ -181,6 +183,7 @@ These product decisions are now fixed for v1 planning unless Benny explicitly ch
    - Use a JobSpy MCP-backed Scout ingestion path.
    - Prioritize Indeed as the first real source.
    - Use Benny's `job-search-spec.md` as the human preference source, but start the active v1 Scout profile narrowly: `Data Analyst` in `New York City`.
+   - Scout should not remain a pure fetch wrapper; it should own a post-ingest triage decision pass over new/changed jobs with explicit ambiguity handling.
    - Keep the Scout adapter contract provider-extensible so later sources can plug in without redesigning the canonical ingestion layer.
 
 2. **Browser Fill ATS priority**
@@ -204,10 +207,10 @@ These product decisions are now fixed for v1 planning unless Benny explicitly ch
 
 ## Remaining open questions
 
-1. What minimum run-ops surface is enough before moving from Scout hardening to Needle hardening?
-2. How explicit should unsupported-claim detection become in Needle v1: heuristic warnings or stronger evidence mapping?
-3. What minimum evidence should Browser Fill capture per run: structured field summary only, screenshots, or both?
-4. Should Milestone 4 introduce a first-class `submission_records` entity, or keep submission metadata on `applications` for the first pass?
+1. What initial confidence thresholds should govern Scout auto-shortlist, auto-archive, defer, and human-review routing in v1?
+2. What minimum run-ops surface is enough before moving from Scout hardening to Needle hardening?
+3. How explicit should unsupported-claim detection become in Needle v1: heuristic warnings or stronger evidence mapping?
+4. What minimum evidence should Browser Fill capture per run: structured field summary only, screenshots, or both?
 5. When Scout expands beyond the first narrow profile, should multi-profile search configuration live in DB, repo config, or app-managed settings?
 
 ## Exit condition for roadmap v1

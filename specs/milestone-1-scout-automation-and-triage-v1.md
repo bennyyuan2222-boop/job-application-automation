@@ -7,9 +7,9 @@ _Last updated: 2026-03-25_
 
 Make the top of the funnel real.
 
-By the end of this milestone, jobs should arrive automatically on a schedule, land in Postgres with durable provenance, dedupe cleanly, and appear in DB-backed Inbox/Shortlist views that Benny can trust.
+By the end of this milestone, jobs should arrive automatically on a schedule, land in Postgres with durable provenance, dedupe cleanly, and receive structured Scout decisions that determine whether they should be shortlisted, archived, deferred, or surfaced for human review.
 
-This milestone turns Scout from a demo/manual ingest flow into a real discovery lane.
+This milestone turns Scout from a demo/manual ingest flow into a real discovery + triage lane.
 
 ## Primary user outcome
 
@@ -17,7 +17,8 @@ Benny should be able to wake up, open the app, and see fresh jobs that:
 - came from real runs rather than hand-entered demo data
 - are not duplicated every time Scout runs
 - have visible provenance and fit rationale
-- can be shortlisted or archived with audit history
+- carry a visible Scout recommendation with confidence and reasons
+- automatically move only when Scout is highly confident, while ambiguous jobs remain visible for review
 
 ## Locked v1 decisions
 
@@ -28,6 +29,8 @@ Benny should be able to wake up, open the app, and see fresh jobs that:
 - Initial schedule: weekdays at `8:00 AM America/New_York`, plus a Sunday `6:00 PM America/New_York` backfill run.
 - Heartbeat is intentionally not part of the core Scout v1 ingest/alert path yet.
 - In v1, `archived` means suppress forever; repeated sightings should preserve provenance but should not automatically re-surface archived jobs.
+- Scout should own a post-ingest decision pass with explicit verdicts (`shortlist`, `archive`, `defer`, `needs_human_review`) and ambiguity handling.
+- Any auto-action policy in v1 should be conservative and auditable rather than silently acting on gray-zone jobs.
 - The adapter boundary must stay generic enough that other sources can be added later without redesigning the core ingestion model.
 
 ## In scope
@@ -111,7 +114,24 @@ It does need to provide:
 - visible risks/gaps
 - enough explanation that Benny can understand why a job surfaced highly
 
-### 6. Inbox and Shortlist read models
+### 6. Scout decision pass
+After deterministic ingestion finishes, Scout should run a structured decision pass over new or materially changed jobs.
+
+Required outputs per decision:
+- `verdict` (`shortlist`, `archive`, `defer`, `needs_human_review`)
+- confidence
+- top reasons
+- ambiguity flags when the job is not safe to auto-act on
+- policy/version metadata sufficient to explain the recommendation later
+- whether the system auto-applied the decision or only recorded a recommendation
+
+Requirements:
+- deterministic ingest should remain separate from Scout judgment
+- ambiguous cases should be treated as a first-class outcome, not as an error or silent fallback
+- high-confidence jobs may be auto-shortlisted or auto-archived conservatively
+- low-confidence or mixed-signal jobs should remain human-reviewable
+
+### 7. Inbox and Shortlist read models
 The UI should expose real DB-backed Scout outputs.
 
 Required views:
@@ -123,7 +143,7 @@ Required actions:
 - archive
 - open job details or next handoff target
 
-### 7. Audit trail
+### 8. Audit trail
 All meaningful actions should emit audit events.
 
 Required event categories:
@@ -131,6 +151,9 @@ Required event categories:
 - source record captured
 - job discovered
 - job deduped / source record linked
+- scout decision created
+- scout decision auto-applied
+- scout decision overridden
 - job shortlisted
 - job archived
 
@@ -167,10 +190,18 @@ Requirements:
 - later sightings of the same archived job may still update provenance/run history behind the scenes if useful for ops/debugging
 - archived suppression should be intentional and visible in the data model/audit trail rather than emerging accidentally from UI filtering alone
 
+### D. Feedback capture and override visibility
+Scout becomes more useful only if its recommendations are visible and comparable against what Benny actually does.
+
+Recommended v1 support:
+- preserve the latest Scout recommendation for a job
+- surface whether Benny’s eventual action matched or overrode Scout
+- keep this history queryable via decision records and/or audit events rather than relying on memory or chat context
+
 ## Out of scope
 
 Do not build in this milestone:
-- automatic shortlisting without Benny review
+- opaque unsupervised auto-triage with no confidence thresholds, ambiguity flags, or audit trail
 - application creation from ingestion alone
 - browser automation
 - live portal interaction
@@ -188,6 +219,7 @@ This milestone should make the Scout-owned data model explicit.
 - `job_source_links`
 - `jobs`
 - `job_scorecards`
+- `scout_decisions`
 - `audit_events`
 
 ### Recommended fields / concepts
@@ -234,6 +266,19 @@ Should capture:
 - risks
 - scorer type/version when meaningful
 
+#### `scout_decisions`
+Should capture:
+- job id
+- optional scrape run id or other source-decision linkage
+- verdict (`shortlist`, `archive`, `defer`, `needs_human_review`)
+- decision source (`heuristic`, `agent`, `hybrid` as needed)
+- confidence
+- reason summary / reasons list
+- ambiguity flags list
+- policy version
+- whether the decision was auto-applied
+- creation timestamp
+
 ## UX requirements
 
 ### Inbox
@@ -242,10 +287,14 @@ Each job card/row should expose:
 - company
 - location/work mode
 - priority score
+- Scout verdict/recommendation
+- confidence band or score
 - top reason(s)
+- ambiguity flags when present
 - risks or caveats
 - provenance/source
 - last seen or posted recency
+- whether Scout already auto-acted or only recommended
 - shortlist action
 - archive action
 
@@ -254,10 +303,20 @@ Each shortlisted job should expose:
 - all core job info
 - provenance summary
 - score summary
+- the Scout decision summary that led to shortlisting
+- whether the shortlist action was automatic or human-confirmed
 - whether an application already exists
 - a clear next action:
   - start application, or
   - open downstream queue item
+
+### Human review handling
+Ambiguous jobs should remain visible rather than being silently dropped into archive or hidden inside raw run logs.
+
+Recommended visibility:
+- a `needs_human_review` recommendation state
+- ambiguity flags
+- enough reasons/context that Benny can understand why Scout hesitated
 
 ### Run visibility
 Even a minimal run list is valuable.
@@ -280,7 +339,8 @@ Recommended fields:
    - `scrape_runs`
    - `job_source_records`
    - `job_source_links`
-   - any missing status/count fields
+   - `scout_decisions`
+   - any missing status/count/decision fields
 
 3. **Implement ingestion service with idempotent semantics**
    - create run
@@ -290,26 +350,34 @@ Recommended fields:
    - write scorecards
    - finish run with counts/errors
 
-4. **Harden dedupe rules with fixtures/tests**
+4. **Implement the Scout decision pass**
+   - select candidate jobs after ingest
+   - persist verdict/confidence/reasons/ambiguity flags
+   - apply conservative auto-actions when policy allows
+   - preserve human-reviewable jobs when ambiguity remains
+
+5. **Harden dedupe and decision rules with fixtures/tests**
    - rerun identical payloads
    - rerun near-duplicates
    - rerun changed listing copies
+   - cover ambiguous cases and override-worthy edge cases
 
-5. **Wire scheduled trigger path**
+6. **Wire scheduled trigger path**
    - OpenClaw/Gateway cron should invoke a stable Scout service entrypoint on the host with JobSpy MCP access
    - configure the first live schedule as weekdays at `8:00 AM America/New_York`, plus Sunday `6:00 PM America/New_York` for backfill
    - manual trigger remains available
    - heartbeat remains out of scope for the first Scout implementation pass; if enabled later, it stays separate from the main ingest path
 
-6. **Build or refine Inbox / Shortlist read models**
+7. **Build or refine Inbox / Shortlist read models**
    - ensure UI reads through stable query helpers rather than raw ORM calls scattered across routes
+   - surface Scout decision metadata, not just raw job rows
 
-7. **Add minimal run-ops visibility**
+8. **Add minimal run-ops visibility**
    - at least enough to inspect recent run outcomes without shell access
 
-8. **Add end-to-end smoke tests and fixture backfills**
+9. **Add end-to-end smoke tests and fixture backfills**
    - run from empty DB
-   - verify visible jobs and triage actions
+   - verify visible jobs, Scout decisions, and triage actions
 
 ## Acceptance criteria
 
@@ -332,11 +400,19 @@ The milestone is complete when all of the following are true:
 - dedupe decisions are explainable via linked source records and/or audit payloads
 - malformed or partial source records do not crash the entire run silently
 
+### Decisioning / ambiguity handling
+- every new or materially changed Scout candidate receives a persisted decision
+- each decision includes a verdict, confidence, reasons, and ambiguity flags when relevant
+- high-confidence decisions can auto-act conservatively under policy control
+- ambiguous jobs are routed to human review rather than being silently auto-archived or auto-shortlisted
+- manual overrides remain auditable relative to Scout’s prior recommendation
+
 ### UI / user flow
 - Inbox renders real Scout-created jobs from Postgres
 - Shortlist renders real shortlisted jobs from Postgres
 - shortlist and archive actions update state and emit audit events
 - the UI shows enough job rationale to support triage
+- the UI surfaces Scout recommendation/confidence/ambiguity data rather than only raw scorecards
 
 ### Operational sanity
 - a failed run is visibly failed, not “completed” with silent drops
@@ -350,6 +426,8 @@ Add/extend tests for:
 - normalization helpers
 - dedupe rules
 - scorecard generation
+- Scout decision helpers / threshold logic
+- ambiguity flag generation
 - status transitions for discovered/shortlisted/archived
 - query/result counting helpers if extracted
 
@@ -361,20 +439,27 @@ Use a test DB and realistic fixtures to verify:
 - partial bad records do not corrupt the rest of the run
 - shortlist/archive mutations update UI-facing state and audit trail
 - the JobSpy MCP -> Indeed adapter path maps upstream fields into the canonical ingestion contract correctly
+- new or materially changed jobs receive Scout decisions
+- ambiguous jobs persist `needs_human_review` or `defer` rather than forcing a silent auto-action
+- high-confidence cases can auto-shortlist or auto-archive according to policy
 
 ### End-to-end tests
 At minimum:
 1. trigger Scout run
-2. confirm Inbox populated
-3. shortlist one job
-4. confirm Shortlist populated
-5. archive one job
-6. confirm it disappears from active queues
+2. confirm Scout decisions are created for fresh jobs
+3. confirm Inbox populated with recommendation metadata
+4. shortlist one job
+5. confirm Shortlist populated
+6. archive one job
+7. confirm it disappears from active queues
 
 ### Manual smoke checklist
-- run sample ingestion from UI
+- run Scout ingestion
 - inspect recent audit events
-- rerun same sample to confirm dedupe
+- rerun the same input to confirm dedupe
+- inspect recent Scout decisions for verdict/confidence/reasons/ambiguity flags
+- confirm at least one high-confidence job can auto-route as intended
+- confirm at least one ambiguous job remains human-reviewable
 - inspect a run with at least one intentionally malformed record
 - confirm recent run summary surfaces counts/errors clearly
 
@@ -383,8 +468,15 @@ At minimum:
 ### Keep raw and canonical layers separate
 Do not let raw source payload shape leak into canonical `jobs` semantics.
 
+### Separate deterministic ingest from Scout judgment
+The fetch/normalize/dedupe layer should remain explainable and deterministic.
+The Scout decision pass should consume canonical jobs and emit structured recommendations rather than blurring everything into one opaque loop.
+
 ### Make dedupe explainable
 Store enough linking context that a human can understand why two source records became one job.
+
+### Persist decisions, not just side effects
+If Scout auto-shortlists or auto-archives, the recommendation and confidence should still exist as first-class persisted data.
 
 ### Prefer append-only source history
 Do not overwrite raw records just because normalization improves later.
@@ -419,11 +511,14 @@ Distinguish:
 - a scheduler accidentally triggers the same run twice
 - a source partially times out and returns only some pages
 - a listing disappears from the source after previously being seen
+- Scout auto-acts on a gray-zone job without preserving why it made that call
+- ambiguous jobs are silently buried instead of routed to human review
+- manual overrides happen, but the system loses the original Scout recommendation
 
 ## Remaining open questions
 
-1. Do we want a separate “ignored” or “suppressed” state later, even though `archived` means suppress forever in v1?
-2. What minimum run-ops UI is enough before moving on to Milestone 2?
-3. Should scorecard policy remain heuristic-only for now, or include lightweight JD-to-resume relevance features?
+1. What initial confidence thresholds should govern `shortlist`, `archive`, `defer`, and `needs_human_review` in v1?
+2. Do we want a separate “ignored” or “suppressed” state later, even though `archived` means suppress forever in v1?
+3. What minimum run-ops UI is enough before moving on to Milestone 2?
 4. How much provider-specific telemetry from JobSpy/Indeed should be surfaced in the UI versus kept in ops/debug views only?
-5. When Scout expands beyond the first narrow `Data Analyst + NYC` profile, how should multiple active search profiles be represented operationally?
+5. When Scout expands beyond the first narrow `Data Analyst + NYC` profile, how should multiple active search profiles and feedback policies be represented operationally?
