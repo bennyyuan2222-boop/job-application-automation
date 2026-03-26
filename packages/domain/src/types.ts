@@ -41,12 +41,29 @@ export type PortalSessionStatus = (typeof PORTAL_SESSION_STATUSES)[number];
 
 export const TAILORING_RUN_STATUSES = [
   'created',
+  'generating',
   'generated_for_review',
   'edits_requested',
   'approved',
+  'rejected',
   'paused',
+  'failed',
 ] as const;
 export type TailoringRunStatus = (typeof TAILORING_RUN_STATUSES)[number];
+
+export const TAILORING_FIT_VERDICTS = ['strong_match', 'viable', 'stretch', 'weak'] as const;
+export type TailoringFitVerdict = (typeof TAILORING_FIT_VERDICTS)[number];
+
+export const TAILORING_PROCEED_RECOMMENDATIONS = [
+  'proceed',
+  'proceed_with_caution',
+  'revise',
+  'pause',
+] as const;
+export type TailoringProceedRecommendation = (typeof TAILORING_PROCEED_RECOMMENDATIONS)[number];
+
+export const TAILORING_GENERATION_MODES = ['heuristic', 'agent', 'hybrid'] as const;
+export type TailoringGenerationMode = (typeof TAILORING_GENERATION_MODES)[number];
 
 export const RESUME_SECTION_KINDS = [
   'summary',
@@ -90,4 +107,37 @@ export type TailoringRisk = {
   requirement: string;
   severity: 'low' | 'medium' | 'high';
   reason: string;
+};
+
+export type TailoringFitAssessment = {
+  summary: string;
+  verdict: TailoringFitVerdict;
+  matchedStrengths: string[];
+  likelyGaps: string[];
+  riskNotes: string[];
+  proceedRecommendation: TailoringProceedRecommendation;
+};
+
+export type TailoringBaseSelectionRecord = {
+  selectedResumeVersionId: string;
+  selectedResumeTitle: string;
+  lane?: string | null;
+  score?: number | null;
+  reasons: string[];
+  candidateCount?: number | null;
+};
+
+export type TailoringGenerationMetadata = {
+  strategyVersion: string;
+  promptVersion?: string | null;
+  modelId?: string | null;
+  provider?: string | null;
+  executionMode: TailoringGenerationMode;
+  latencyMs?: number | null;
+  costUsd?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  totalTokens?: number | null;
+  sessionKey?: string | null;
+  sourceTailoringRunId?: string | null;
 };

@@ -4,8 +4,12 @@ import {
   auditEventItemSchema,
   jobListItemSchema,
   resumeVersionDetailSchema,
+  tailoringBaseSelectionSchema,
   tailoringDetailSchema,
+  tailoringFitAssessmentSchema,
+  tailoringGenerationMetadataSchema,
   tailoringQueueItemSchema,
+  tailoringRunSummarySchema,
   type ApplicationDetail,
   type ApplyingQueueItem,
   type AuditEventItem,
@@ -83,6 +87,21 @@ function answerValueFromJson(value: unknown): { value: unknown; required: boolea
   };
 }
 
+function asFitAssessment(value: unknown) {
+  const parsed = tailoringFitAssessmentSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function asBaseSelection(value: unknown) {
+  const parsed = tailoringBaseSelectionSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function asGenerationMetadata(value: unknown) {
+  const parsed = tailoringGenerationMetadataSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 function mapResumeVersionDetail(resume: {
   id: string;
   kind: string;
@@ -110,23 +129,35 @@ function mapTailoringRunSummary(run: {
   completedAt: Date | null;
   instructions: string | null;
   revisionNote: string | null;
+  sourceTailoringRunId: string | null;
+  fitAssessmentJson: unknown;
+  baseSelectionJson: unknown;
   rationaleJson: unknown;
   changeSummaryJson: unknown;
   risksJson: unknown;
+  generationMetadataJson: unknown;
+  failureCode: string | null;
+  failureMessage: string | null;
   outputResumeVersionId: string | null;
 }) {
-  return {
+  return tailoringRunSummarySchema.parse({
     id: run.id,
     status: run.status,
     createdAt: run.createdAt.toISOString(),
     completedAt: run.completedAt ? run.completedAt.toISOString() : null,
     instructions: run.instructions,
     revisionNote: run.revisionNote,
+    sourceTailoringRunId: run.sourceTailoringRunId,
     rationale: asStringArray(run.rationaleJson),
     changeSummary: asStringArray(run.changeSummaryJson),
     risks: asRiskArray(run.risksJson),
+    fitAssessment: asFitAssessment(run.fitAssessmentJson),
+    baseSelection: asBaseSelection(run.baseSelectionJson),
+    generationMetadata: asGenerationMetadata(run.generationMetadataJson),
+    failureCode: run.failureCode,
+    failureMessage: run.failureMessage,
     outputResumeVersionId: run.outputResumeVersionId,
-  };
+  });
 }
 
 export async function getRecentAuditEvents(limit = 20): Promise<AuditEventItem[]> {

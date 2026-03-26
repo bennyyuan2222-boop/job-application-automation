@@ -32,9 +32,14 @@ test('application transitions reject submitted -> applying', () => {
   assert.throws(() => assertApplicationTransition('submitted', 'applying'));
 });
 
-test('tailoring run transitions allow generated_for_review -> approved', () => {
+test('tailoring run transitions allow generating -> generated_for_review', () => {
+  assert.equal(canTransitionTailoringRun('generating', 'generated_for_review'), true);
+  assert.deepEqual(listAllowedTailoringRunTransitions('edits_requested'), ['generating', 'paused', 'failed']);
+});
+
+test('tailoring run transitions allow generated_for_review -> approved and rejected', () => {
   assert.equal(canTransitionTailoringRun('generated_for_review', 'approved'), true);
-  assert.deepEqual(listAllowedTailoringRunTransitions('edits_requested'), ['generated_for_review', 'paused']);
+  assert.equal(canTransitionTailoringRun('generated_for_review', 'rejected'), true);
 });
 
 test('tailoring run transitions reject approved -> edits_requested', () => {

@@ -79,16 +79,64 @@ export const tailoringRiskSchema = z.object({
   reason: z.string(),
 });
 
+export const tailoringFitAssessmentSchema = z.object({
+  summary: z.string(),
+  verdict: z.enum(['strong_match', 'viable', 'stretch', 'weak']),
+  matchedStrengths: z.array(z.string()).default([]),
+  likelyGaps: z.array(z.string()).default([]),
+  riskNotes: z.array(z.string()).default([]),
+  proceedRecommendation: z.enum(['proceed', 'proceed_with_caution', 'revise', 'pause']),
+});
+
+export const tailoringBaseSelectionSchema = z.object({
+  selectedResumeVersionId: z.string(),
+  selectedResumeTitle: z.string(),
+  lane: z.string().nullable().optional(),
+  score: z.number().nullable().optional(),
+  reasons: z.array(z.string()).default([]),
+  candidateCount: z.number().int().nullable().optional(),
+});
+
+export const tailoringGenerationMetadataSchema = z.object({
+  strategyVersion: z.string(),
+  promptVersion: z.string().nullable().optional(),
+  modelId: z.string().nullable().optional(),
+  provider: z.string().nullable().optional(),
+  executionMode: z.enum(['heuristic', 'agent', 'hybrid']),
+  latencyMs: z.number().int().nonnegative().nullable().optional(),
+  costUsd: z.number().nonnegative().nullable().optional(),
+  inputTokens: z.number().int().nonnegative().nullable().optional(),
+  outputTokens: z.number().int().nonnegative().nullable().optional(),
+  totalTokens: z.number().int().nonnegative().nullable().optional(),
+  sessionKey: z.string().nullable().optional(),
+  sourceTailoringRunId: z.string().nullable().optional(),
+});
+
 export const tailoringRunSummarySchema = z.object({
   id: z.string(),
-  status: z.string(),
+  status: z.enum([
+    'created',
+    'generating',
+    'generated_for_review',
+    'edits_requested',
+    'approved',
+    'rejected',
+    'paused',
+    'failed',
+  ]),
   createdAt: z.string(),
   completedAt: z.string().nullable(),
   instructions: z.string().nullable(),
   revisionNote: z.string().nullable(),
+  sourceTailoringRunId: z.string().nullable(),
   rationale: z.array(z.string()),
   changeSummary: z.array(z.string()),
   risks: z.array(tailoringRiskSchema),
+  fitAssessment: tailoringFitAssessmentSchema.nullable(),
+  baseSelection: tailoringBaseSelectionSchema.nullable(),
+  generationMetadata: tailoringGenerationMetadataSchema.nullable(),
+  failureCode: z.string().nullable(),
+  failureMessage: z.string().nullable(),
   outputResumeVersionId: z.string().nullable(),
 });
 
@@ -287,6 +335,9 @@ export type ResumeDocument = z.infer<typeof resumeDocumentSchema>;
 export type ResumeVersionSummary = z.infer<typeof resumeVersionSummarySchema>;
 export type ResumeVersionDetail = z.infer<typeof resumeVersionDetailSchema>;
 export type TailoringRisk = z.infer<typeof tailoringRiskSchema>;
+export type TailoringFitAssessment = z.infer<typeof tailoringFitAssessmentSchema>;
+export type TailoringBaseSelection = z.infer<typeof tailoringBaseSelectionSchema>;
+export type TailoringGenerationMetadata = z.infer<typeof tailoringGenerationMetadataSchema>;
 export type TailoringRunSummary = z.infer<typeof tailoringRunSummarySchema>;
 export type ReadinessIssue = z.infer<typeof readinessIssueSchema>;
 export type ReadinessSummary = z.infer<typeof readinessSummarySchema>;

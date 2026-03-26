@@ -42,6 +42,17 @@ enum ApplicationStatus {
   archived
 }
 
+enum TailoringRunStatus {
+  created
+  generating
+  generated_for_review
+  edits_requested
+  approved
+  rejected
+  paused
+  failed
+}
+
 enum AnswerSourceType {
   manual
   agent
@@ -113,10 +124,10 @@ enum ScoutDecisionVerdict {
 }
 
 model User {
-  id          String   @id @default(cuid())
-  email       String   @unique
-  role        String   @default("owner")
-  createdAt   DateTime @default(now())
+  id          String    @id @default(cuid())
+  email       String    @unique
+  role        String    @default("owner")
+  createdAt   DateTime  @default(now())
   lastLoginAt DateTime?
 }
 
@@ -133,8 +144,8 @@ model Company {
 }
 
 model CompanyProfile {
-  companyId         String   @id
-  company           Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId         String    @id
+  company           Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
   aiNativeScore     Int?
   brandValueScore   Int?
   growthSignalScore Int?
@@ -166,7 +177,7 @@ model Job {
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
   scorecards          JobScorecard[]
-  scoutDecisions   ScoutDecision[]
+  scoutDecisions      ScoutDecision[]
   applications        Application[]
   sourceLinks         JobSourceLink[]
   notes               JobNote[]
@@ -210,7 +221,7 @@ model ScrapeRun {
   startedAt        DateTime             @default(now())
   completedAt      DateTime?
   sourceRecords    JobSourceRecord[]
-  scoutDecisions  ScoutDecision[]
+  scoutDecisions   ScoutDecision[]
 
   @@index([startedAt])
   @@index([triggerType, startedAt])
@@ -263,67 +274,84 @@ model JobNote {
 }
 
 model ResumeVersion {
-  id                    String                @id @default(cuid())
+  id                    String                  @id @default(cuid())
   kind                  ResumeVersionKind
   parentResumeVersionId String?
-  parentResumeVersion   ResumeVersion?        @relation("ResumeVersionLineage", fields: [parentResumeVersionId], references: [id])
-  childResumeVersions   ResumeVersion[]       @relation("ResumeVersionLineage")
+  parentResumeVersion   ResumeVersion?          @relation("ResumeVersionLineage", fields: [parentResumeVersionId], references: [id])
+  childResumeVersions   ResumeVersion[]         @relation("ResumeVersionLineage")
   title                 String
   contentMarkdown       String
   sectionsJson          Json?
   renderedPdfUrl        String?
   renderedDocxUrl       String?
   changeSummaryJson     Json?
-  createdByType         ResumeCreatedByType   @default(agent)
-  createdAt             DateTime              @default(now())
-  baseApplications      Application[]         @relation("BaseResumeVersion")
-  tailoredApplications  Application[]         @relation("TailoredResumeVersion")
-  inputTailoringRuns    TailoringRun[]        @relation("InputResumeVersion")
-  outputTailoringRuns   TailoringRun[]        @relation("OutputResumeVersion")
+  createdByType         ResumeCreatedByType     @default(agent)
+  createdAt             DateTime                @default(now())
+  baseApplications      Application[]           @relation("BaseResumeVersion")
+  tailoredApplications  Application[]           @relation("TailoredResumeVersion")
+  inputTailoringRuns    TailoringRun[]          @relation("InputResumeVersion")
+  outputTailoringRuns   TailoringRun[]          @relation("OutputResumeVersion")
   attachments           ApplicationAttachment[]
 }
 
 model Application {
-  id                     String                @id @default(cuid())
-  jobId                  String
-  job                    Job                   @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  status                 ApplicationStatus     @default(tailoring)
-  baseResumeVersionId    String
-  baseResumeVersion      ResumeVersion         @relation("BaseResumeVersion", fields: [baseResumeVersionId], references: [id])
+  id                      String                  @id @default(cuid())
+  jobId                   String
+  job                     Job                     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  status                  ApplicationStatus       @default(tailoring)
+  baseResumeVersionId     String
+  baseResumeVersion       ResumeVersion           @relation("BaseResumeVersion", fields: [baseResumeVersionId], references: [id])
   tailoredResumeVersionId String?
-  tailoredResumeVersion  ResumeVersion?        @relation("TailoredResumeVersion", fields: [tailoredResumeVersionId], references: [id])
-  portalUrl              String?
-  portalDomain           String?
-  completionPercent      Int                   @default(0)
-  missingRequiredCount   Int                   @default(0)
-  lowConfidenceCount     Int                   @default(0)
-  pausedReason           String?
-  submittedAt            DateTime?
-  createdAt              DateTime              @default(now())
-  updatedAt              DateTime              @updatedAt
-  tailoringRuns          TailoringRun[]
-  answers                ApplicationAnswer[]
-  attachments            ApplicationAttachment[]
-  portalSessions         PortalSession[]
+  tailoredResumeVersion   ResumeVersion?          @relation("TailoredResumeVersion", fields: [tailoredResumeVersionId], references: [id])
+  portalUrl               String?
+  portalDomain            String?
+  completionPercent       Int                     @default(0)
+  missingRequiredCount    Int                     @default(0)
+  lowConfidenceCount      Int                     @default(0)
+  pausedReason            String?
+  submittedAt             DateTime?
+  needleSessionKey        String?
+  needleSessionUpdatedAt  DateTime?
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+  tailoringRuns           TailoringRun[]
+  answers                 ApplicationAnswer[]
+  attachments             ApplicationAttachment[]
+  portalSessions          PortalSession[]
+
+  @@index([needleSessionKey])
 }
 
 model TailoringRun {
-  id                    String         @id @default(cuid())
-  applicationId         String
-  application           Application    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
-  inputResumeVersionId  String
-  inputResumeVersion    ResumeVersion  @relation("InputResumeVersion", fields: [inputResumeVersionId], references: [id])
-  outputResumeVersionId String?
-  outputResumeVersion   ResumeVersion? @relation("OutputResumeVersion", fields: [outputResumeVersionId], references: [id])
-  jobSnapshotJson       Json?
-  rationaleJson         Json?
-  risksJson             Json?
-  changeSummaryJson     Json?
-  instructions          String?
-  status                String         @default("created")
-  revisionNote          String?
-  createdAt             DateTime       @default(now())
-  completedAt           DateTime?
+  id                     String             @id @default(cuid())
+  applicationId          String
+  application            Application        @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  inputResumeVersionId   String
+  inputResumeVersion     ResumeVersion      @relation("InputResumeVersion", fields: [inputResumeVersionId], references: [id])
+  outputResumeVersionId  String?
+  outputResumeVersion    ResumeVersion?     @relation("OutputResumeVersion", fields: [outputResumeVersionId], references: [id])
+  sourceTailoringRunId   String?
+  sourceTailoringRun     TailoringRun?      @relation("TailoringRunLineage", fields: [sourceTailoringRunId], references: [id])
+  childTailoringRuns     TailoringRun[]     @relation("TailoringRunLineage")
+  jobSnapshotJson        Json?
+  fitAssessmentJson      Json?
+  baseSelectionJson      Json?
+  rationaleJson          Json?
+  risksJson              Json?
+  changeSummaryJson      Json?
+  generationMetadataJson Json?
+  failureCode            String?
+  failureMessage         String?
+  failureDetailsJson     Json?
+  instructions           String?
+  status                 TailoringRunStatus @default(created)
+  revisionNote           String?
+  createdAt              DateTime           @default(now())
+  completedAt            DateTime?
+
+  @@index([applicationId, createdAt])
+  @@index([sourceTailoringRunId])
+  @@index([status, createdAt])
 }
 
 model ApplicationAnswer {
@@ -343,15 +371,15 @@ model ApplicationAnswer {
 }
 
 model ApplicationAttachment {
-  id              String          @id @default(cuid())
+  id              String         @id @default(cuid())
   applicationId   String
-  application     Application     @relation(fields: [applicationId], references: [id], onDelete: Cascade)
-  attachmentType  AttachmentType  @default(resume)
+  application     Application    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  attachmentType  AttachmentType @default(resume)
   resumeVersionId String?
-  resumeVersion   ResumeVersion?  @relation(fields: [resumeVersionId], references: [id])
+  resumeVersion   ResumeVersion? @relation(fields: [resumeVersionId], references: [id])
   fileUrl         String
   filename        String
-  createdAt       DateTime        @default(now())
+  createdAt       DateTime       @default(now())
 }
 
 model PortalSession {
@@ -369,18 +397,18 @@ model PortalSession {
 }
 
 model ScoutDecision {
-  id                 String                 @id @default(cuid())
+  id                 String               @id @default(cuid())
   jobId              String
-  job                Job                    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  job                Job                  @relation(fields: [jobId], references: [id], onDelete: Cascade)
   scrapeRunId        String
-  scrapeRun          ScrapeRun              @relation(fields: [scrapeRunId], references: [id], onDelete: Cascade)
+  scrapeRun          ScrapeRun            @relation(fields: [scrapeRunId], references: [id], onDelete: Cascade)
   verdict            ScoutDecisionVerdict
   confidence         Float
   reasonsJson        Json
   ambiguityFlagsJson Json?
-  actedAutomatically Boolean                @default(false)
+  actedAutomatically Boolean              @default(false)
   policyVersion      String
-  createdAt          DateTime               @default(now())
+  createdAt          DateTime             @default(now())
 
   @@unique([jobId, scrapeRunId])
   @@index([jobId, createdAt])

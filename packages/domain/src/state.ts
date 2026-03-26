@@ -17,11 +17,14 @@ const applicationTransitions: Record<ApplicationStatus, ApplicationStatus[]> = {
 };
 
 const tailoringRunTransitions: Record<TailoringRunStatus, TailoringRunStatus[]> = {
-  created: ['generated_for_review', 'paused'],
-  generated_for_review: ['edits_requested', 'approved', 'paused'],
-  edits_requested: ['generated_for_review', 'paused'],
+  created: ['generating', 'paused', 'failed'],
+  generating: ['generated_for_review', 'failed', 'paused'],
+  generated_for_review: ['edits_requested', 'approved', 'rejected', 'paused', 'failed'],
+  edits_requested: ['generating', 'paused', 'failed'],
   approved: [],
-  paused: ['created', 'generated_for_review', 'edits_requested'],
+  rejected: [],
+  paused: ['generating', 'failed'],
+  failed: [],
 };
 
 export function canTransitionJob(from: JobStatus, to: JobStatus): boolean {
