@@ -1,26 +1,19 @@
 import { ActorType, JobStatus, Prisma } from '@job-ops/db';
 import { prisma } from '@job-ops/db';
-import { makeAuditEvent, normalizeScoutJob, scoreScoutJob, type RawScoutJobInput } from '@job-ops/domain';
+import {
+  makeAuditEvent,
+  normalizeScoutJob,
+  scoreScoutJob,
+  type RawScoutJobInput,
+} from '@job-ops/domain';
+import { HEURISTIC_SCOUT_POLICY_VERSION, type ScoutDecisionDraft } from './decision';
+import { reviewJobsWithJobSearcherAgent, type JobSearcherReviewCandidate } from './job-searcher';
 import { loadScoutLearningSignal, type ScoutLearningSignal } from './learning';
 
 export const scoutRunTriggerTypes = ['scheduled', 'manual', 'backfill', 'test'] as const;
 export type ScoutRunTriggerType = (typeof scoutRunTriggerTypes)[number];
 
 type ScoutRunRecord = Awaited<ReturnType<typeof prisma.scrapeRun.findFirstOrThrow>>;
-
-type ScoutDecisionVerdict = 'shortlist' | 'archive' | 'defer' | 'needs_human_review';
-
-type ScoutDecisionDraft = {
-  verdict: ScoutDecisionVerdict;
-  confidence: number;
-  reasons: string[];
-  ambiguityFlags: string[];
-  actedAutomatically: boolean;
-  resultingStatus: JobStatus;
-  policyVersion: string;
-};
-
-const SCOUT_DECISION_POLICY_VERSION = 'scout-decision-v1';
 
 export type RunScoutIngestionInput = {
   sourceKey: string;
@@ -39,6 +32,10 @@ export type RunScoutIngestionInput = {
 export type RunScoutIngestionResult = {
   run: ScoutRunRecord;
   reusedExistingRun: boolean;
+};
+
+type PendingScoutReview = JobSearcherReviewCandidate & {
+  actorLabel: string;
 };
 
 export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<RunScoutIngestionResult> {
@@ -88,6 +85,7 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
   let normalizedCount = 0;
   let erroredCount = 0;
   const errorSummaries: Array<Record<string, unknown>> = [];
+  const pendingReviews: PendingScoutReview[] = [];
 
   try {
     for (const [index, record] of input.records.entries()) {
@@ -117,7 +115,7 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
         normalizedCount += 1;
 
         const learningSignal = await loadScoutLearningSignal(normalized.normalizedTitle);
-        const decisionDraft = buildScoutDecisionDraft(normalized, score, learningSignal);
+        const actorLabel = input.actorLabel ?? 'scout';
 
         const existingJob = await prisma.job.findFirst({
           where: {
@@ -136,13 +134,9 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
         if (existingJob) {
           dedupedCount += 1;
 
-          const shouldAutoApplyDecision = existingJob.status === JobStatus.discovered && decisionDraft.actedAutomatically;
-          const resultingStatus = shouldAutoApplyDecision ? decisionDraft.resultingStatus : existingJob.status;
-
-          const updatedJob = await prisma.job.update({
+          await prisma.job.update({
             where: { id: existingJob.id },
             data: {
-              status: resultingStatus,
               lastSeenAt: new Date(),
               jobDescriptionClean: normalized.descriptionClean || existingJob.jobDescriptionClean,
               salaryText: normalized.salaryText ?? existingJob.salaryText,
@@ -170,31 +164,28 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
             data: { status: 'deduped', errorMessage: null },
           });
 
-          await persistScoutDecision({
-            jobId: updatedJob.id,
-            scrapeRunId: scrapeRun.id,
-            actorLabel: input.actorLabel ?? 'scout',
-            decision: {
-              ...decisionDraft,
-              actedAutomatically: shouldAutoApplyDecision ? decisionDraft.actedAutomatically : false,
-              resultingStatus,
-            },
-            previousStatus: existingJob.status,
-          });
-
           await prisma.auditEvent.create({
             data: makeAuditEvent({
               entityType: 'job',
               entityId: existingJob.id,
               eventType: 'job.source_record_linked',
               actorType: ActorType.agent,
-              actorLabel: input.actorLabel ?? 'scout',
+              actorLabel,
               payloadJson: {
                 scrapeRunId: scrapeRun.id,
                 sourceRecordId: sourceRecord.id,
                 matchType: 'dedupe',
               },
             }),
+          });
+
+          pendingReviews.push({
+            jobId: existingJob.id,
+            previousStatus: existingJob.status,
+            normalized,
+            score,
+            learningSignal,
+            actorLabel,
           });
 
           continue;
@@ -220,7 +211,7 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
             jobUrl: normalized.sourceUrl ?? `source://${input.sourceKey}/${sourceRecord.id}`,
             jobDescriptionRaw: normalized.descriptionRaw,
             jobDescriptionClean: normalized.descriptionClean,
-            status: decisionDraft.resultingStatus,
+            status: JobStatus.discovered,
           },
         });
 
@@ -255,14 +246,6 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
           },
         });
 
-        await persistScoutDecision({
-          jobId: job.id,
-          scrapeRunId: scrapeRun.id,
-          actorLabel: input.actorLabel ?? 'scout',
-          decision: decisionDraft,
-          previousStatus: null,
-        });
-
         await prisma.auditEvent.createMany({
           data: [
             makeAuditEvent({
@@ -270,7 +253,7 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
               entityId: scrapeRun.id,
               eventType: 'scout.job_captured',
               actorType: ActorType.agent,
-              actorLabel: input.actorLabel ?? 'scout',
+              actorLabel,
               payloadJson: { jobId: job.id, sourceRecordId: sourceRecord.id },
             }),
             makeAuditEvent({
@@ -278,8 +261,8 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
               entityId: job.id,
               eventType: 'job.discovered',
               actorType: ActorType.agent,
-              actorLabel: input.actorLabel ?? 'scout',
-              afterState: { status: decisionDraft.resultingStatus },
+              actorLabel,
+              afterState: { status: JobStatus.discovered },
               payloadJson: {
                 scrapeRunId: scrapeRun.id,
                 sourceRecordId: sourceRecord.id,
@@ -287,6 +270,15 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
               },
             }),
           ],
+        });
+
+        pendingReviews.push({
+          jobId: job.id,
+          previousStatus: JobStatus.discovered,
+          normalized,
+          score,
+          learningSignal,
+          actorLabel,
         });
       } catch (error) {
         erroredCount += 1;
@@ -310,6 +302,42 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
           message: errorMessage,
         });
       }
+    }
+
+    const reviewedDecisions = await resolveScoutDecisions({
+      runId: scrapeRun.id,
+      sourceKey: input.sourceKey,
+      searchTerm: input.searchTerm,
+      searchLocation: input.searchLocation,
+      triggerType,
+      candidates: pendingReviews,
+    });
+
+    for (const candidate of pendingReviews) {
+      const decision = reviewedDecisions.get(candidate.jobId);
+      if (!decision) {
+        throw new Error(`Missing Scout decision for job ${candidate.jobId}`);
+      }
+
+      const shouldAutoApplyDecision = candidate.previousStatus === JobStatus.discovered && decision.actedAutomatically;
+      const resultingStatus = shouldAutoApplyDecision ? decision.resultingStatus : candidate.previousStatus;
+
+      await prisma.job.update({
+        where: { id: candidate.jobId },
+        data: { status: resultingStatus },
+      });
+
+      await persistScoutDecision({
+        jobId: candidate.jobId,
+        scrapeRunId: scrapeRun.id,
+        actorLabel: candidate.actorLabel,
+        decision: {
+          ...decision,
+          actedAutomatically: shouldAutoApplyDecision ? decision.actedAutomatically : false,
+          resultingStatus,
+        },
+        previousStatus: candidate.previousStatus,
+      });
     }
 
     const finalStatus = erroredCount > 0 ? 'partial' : 'completed';
@@ -362,6 +390,41 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
 
     throw error;
   }
+}
+
+async function resolveScoutDecisions(args: {
+  runId: string;
+  sourceKey: string;
+  searchTerm?: string;
+  searchLocation?: string;
+  triggerType: ScoutRunTriggerType;
+  candidates: PendingScoutReview[];
+}) {
+  const decisions = new Map<string, ScoutDecisionDraft>();
+  if (args.candidates.length === 0) {
+    return decisions;
+  }
+
+  const reviewMode = resolveScoutReviewMode(args.triggerType);
+  if (reviewMode === 'job-searcher-agent') {
+    return reviewJobsWithJobSearcherAgent({
+      runId: args.runId,
+      sourceKey: args.sourceKey,
+      searchTerm: args.searchTerm,
+      searchLocation: args.searchLocation,
+      triggerType: args.triggerType,
+      candidates: args.candidates,
+    });
+  }
+
+  for (const candidate of args.candidates) {
+    decisions.set(
+      candidate.jobId,
+      buildScoutDecisionDraft(candidate.normalized, candidate.score, candidate.learningSignal),
+    );
+  }
+
+  return decisions;
 }
 
 async function persistScoutDecision(args: {
@@ -471,11 +534,11 @@ function buildScoutDecisionDraft(
     ambiguityFlags.push('salary_missing');
   }
 
-  if (score.fitScore >= 55 && score.fitScore < 72) {
+  if (score.fitScore >= 5.5 && score.fitScore < 7.2) {
     ambiguityFlags.push('borderline_fit');
   }
 
-  if (score.priorityScore >= 60 && score.priorityScore < 78) {
+  if (score.priorityScore >= 6.0 && score.priorityScore < 7.8) {
     ambiguityFlags.push('borderline_priority');
   }
 
@@ -511,8 +574,8 @@ function buildScoutDecisionDraft(
 
   const shortlistConfidence = clamp(
     0.56 +
-      score.priorityScore / 240 +
-      score.fitScore / 260 +
+      score.priorityScore / 24 +
+      score.fitScore / 26 +
       learningSignal.shortlistConfidenceDelta -
       learningSignal.archiveConfidenceDelta * 0.45 -
       ambiguityFlags.length * 0.08 -
@@ -520,14 +583,14 @@ function buildScoutDecisionDraft(
   );
   const archiveConfidence = clamp(
     0.48 +
-      (100 - score.priorityScore) / 210 +
-      (100 - score.fitScore) / 260 +
+      (10 - score.priorityScore) / 21 +
+      (10 - score.fitScore) / 26 +
       learningSignal.archiveConfidenceDelta -
       learningSignal.shortlistConfidenceDelta * 0.45 +
       score.risks.length * 0.06,
   );
 
-  if (isExactDataAnalyst && score.priorityScore >= 78 && score.fitScore >= 72 && score.risks.length <= 1) {
+  if (isExactDataAnalyst && score.priorityScore >= 7.8 && score.fitScore >= 7.2 && score.risks.length <= 1) {
     const actedAutomatically = shortlistConfidence >= 0.85;
     return {
       verdict: 'shortlist',
@@ -536,11 +599,11 @@ function buildScoutDecisionDraft(
       ambiguityFlags,
       actedAutomatically,
       resultingStatus: actedAutomatically ? JobStatus.shortlisted : JobStatus.discovered,
-      policyVersion: SCOUT_DECISION_POLICY_VERSION,
+      policyVersion: HEURISTIC_SCOUT_POLICY_VERSION,
     };
   }
 
-  if (!isExactDataAnalyst && score.priorityScore <= 42 && score.fitScore <= 48) {
+  if (!isExactDataAnalyst && score.priorityScore <= 4.2 && score.fitScore <= 4.8) {
     const actedAutomatically = archiveConfidence >= 0.85;
     return {
       verdict: 'archive',
@@ -549,33 +612,42 @@ function buildScoutDecisionDraft(
       ambiguityFlags,
       actedAutomatically,
       resultingStatus: actedAutomatically ? JobStatus.archived : JobStatus.discovered,
-      policyVersion: SCOUT_DECISION_POLICY_VERSION,
+      policyVersion: HEURISTIC_SCOUT_POLICY_VERSION,
     };
   }
 
-  if (ambiguityFlags.length > 0 || score.priorityScore >= 68 || score.fitScore >= 65) {
+  if (ambiguityFlags.length > 0 || score.priorityScore >= 6.8 || score.fitScore >= 6.5) {
     return {
       verdict: 'needs_human_review',
       confidence: clamp(
-        0.62 + score.priorityScore / 400 + learningSignal.shortlistConfidenceDelta * 0.5 - ambiguityFlags.length * 0.03,
+        0.62 + score.priorityScore / 40 + learningSignal.shortlistConfidenceDelta * 0.5 - ambiguityFlags.length * 0.03,
       ),
       reasons: [...reasons, 'Ambiguity flags require human review before acting automatically.'],
       ambiguityFlags,
       actedAutomatically: false,
       resultingStatus: JobStatus.discovered,
-      policyVersion: SCOUT_DECISION_POLICY_VERSION,
+      policyVersion: HEURISTIC_SCOUT_POLICY_VERSION,
     };
   }
 
   return {
     verdict: 'defer',
-    confidence: clamp(0.52 + score.priorityScore / 500 + learningSignal.shortlistConfidenceDelta * 0.3),
+    confidence: clamp(0.52 + score.priorityScore / 50 + learningSignal.shortlistConfidenceDelta * 0.3),
     reasons: [...reasons, 'Not a strong enough match to auto-act, but not weak enough to auto-archive.'],
     ambiguityFlags,
     actedAutomatically: false,
     resultingStatus: JobStatus.discovered,
-    policyVersion: SCOUT_DECISION_POLICY_VERSION,
+    policyVersion: HEURISTIC_SCOUT_POLICY_VERSION,
   };
+}
+
+function resolveScoutReviewMode(triggerType: ScoutRunTriggerType) {
+  const configured = process.env.SCOUT_REVIEW_MODE?.trim();
+  if (configured === 'heuristic' || configured === 'job-searcher-agent') {
+    return configured;
+  }
+
+  return triggerType === 'test' ? 'heuristic' : 'job-searcher-agent';
 }
 
 function buildScoutRunQueryJson(input: RunScoutIngestionInput, triggerType: ScoutRunTriggerType) {
@@ -583,6 +655,7 @@ function buildScoutRunQueryJson(input: RunScoutIngestionInput, triggerType: Scou
     searchTerm: input.searchTerm ?? null,
     searchLocation: input.searchLocation ?? null,
     triggerType,
+    reviewMode: resolveScoutReviewMode(triggerType),
     idempotencyKey: input.idempotencyKey ?? null,
     fetchedCount: input.fetchedCount ?? input.records.length,
     rejectedCount: input.rejectedCount ?? 0,
