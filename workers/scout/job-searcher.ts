@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -12,8 +13,20 @@ const execFile = promisify(execFileCallback);
 
 const VALID_VERDICTS: ScoutDecisionVerdict[] = ['shortlist', 'archive', 'defer', 'needs_human_review'];
 const VALID_AUTO_ACTIONS = ['none', 'shortlist', 'archive'] as const;
+const DEFAULT_JOB_SEARCHER_SESSION_KEY = 'agent:job-searcher:main';
+const REVIEW_SESSION_PREFIX = 'agent:job-searcher:scout-review:';
+const REVIEW_SESSION_ENV_KEY = 'SCOUT_JOB_SEARCHER_SESSION_KEY';
+const DEFAULT_BATCH_SIZE = 10;
+const DEFAULT_TIMEOUT_SECONDS = 180;
+const DEFAULT_POLL_INTERVAL_MS = 1500;
 
 type JobSearcherAutoAction = (typeof VALID_AUTO_ACTIONS)[number];
+
+type OpenClawMessage = {
+  role?: string;
+  content?: Array<{ type?: string; text?: string }>;
+  __openclaw?: { seq?: number };
+};
 
 export type JobSearcherReviewCandidate = {
   jobId: string;
@@ -36,13 +49,16 @@ export async function reviewJobsWithJobSearcherAgent(args: {
     return decisions;
   }
 
-  const batchSize = parseInteger(process.env.SCOUT_JOB_SEARCHER_BATCH_SIZE, 10);
-  const timeoutSeconds = parseInteger(process.env.SCOUT_JOB_SEARCHER_TIMEOUT_SECONDS, 180);
+  const batchSize = parseInteger(process.env.SCOUT_JOB_SEARCHER_BATCH_SIZE, DEFAULT_BATCH_SIZE);
+  const timeoutSeconds = parseInteger(process.env.SCOUT_JOB_SEARCHER_TIMEOUT_SECONDS, DEFAULT_TIMEOUT_SECONDS);
+  const currentRunnerAgentId = detectCurrentOpenClawAgentId();
 
-  for (let start = 0; start < args.candidates.length; start += batchSize) {
+  for (let start = 0, batchIndex = 0; start < args.candidates.length; start += batchSize, batchIndex += 1) {
     const batch = args.candidates.slice(start, start + batchSize);
     const parsed = await runJobSearcherReview({
       ...args,
+      batchIndex,
+      currentRunnerAgentId,
       candidates: batch,
       timeoutSeconds,
     });
@@ -63,43 +79,35 @@ async function runJobSearcherReview(args: {
   triggerType: string;
   candidates: JobSearcherReviewCandidate[];
   timeoutSeconds: number;
+  batchIndex: number;
+  currentRunnerAgentId: string | null;
 }) {
+  const configuredSessionKey = process.env[REVIEW_SESSION_ENV_KEY]?.trim() || null;
+  const sessionKey = configuredSessionKey || buildReviewSessionKey(args.runId, args.batchIndex);
+
+  if (args.currentRunnerAgentId === 'job-searcher' && sessionKey === DEFAULT_JOB_SEARCHER_SESSION_KEY) {
+    throw new Error(
+      `Refusing to call default ${DEFAULT_JOB_SEARCHER_SESSION_KEY} from inside job-searcher; use a dedicated review session instead.`,
+    );
+  }
+
+  await gatewayCall('sessions.create', {
+    agentId: 'job-searcher',
+    key: sessionKey,
+    label: buildReviewSessionLabel(args.runId, args.batchIndex),
+  });
+
   const message = buildJobSearcherPrompt(args);
-  const { stdout, stderr } = await execFile(
-    process.env.OPENCLAW_BIN || 'openclaw',
-    [
-      'agent',
-      '--agent',
-      'job-searcher',
-      '--message',
-      message,
-      '--json',
-      '--timeout',
-      String(args.timeoutSeconds),
-    ],
-    {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        OPENCLAW_HIDE_BANNER: '1',
-        OPENCLAW_SUPPRESS_NOTES: '1',
-      },
-      maxBuffer: 10 * 1024 * 1024,
-    },
-  );
-
-  if (stderr?.trim()) {
-    throw new Error(`job-searcher stderr: ${stderr.trim()}`);
-  }
-
-  let envelope: any;
-  try {
-    envelope = JSON.parse(stdout);
-  } catch (error) {
-    throw new Error(`Failed to parse openclaw agent JSON output: ${getErrorMessage(error)}`);
-  }
-
-  const payloadText = extractPayloadText(envelope);
+  const sendResult = await gatewayCall('sessions.send', {
+    key: sessionKey,
+    message,
+  });
+  const messageSeq = Number(sendResult?.messageSeq ?? 0);
+  const payloadText = await waitForAssistantReply({
+    sessionKey,
+    afterSeq: messageSeq,
+    timeoutSeconds: args.timeoutSeconds,
+  });
   const responseJson = extractJsonBlock(payloadText);
 
   let parsed: any;
@@ -266,12 +274,39 @@ function validateJobSearcherResponse(parsed: any, candidates: JobSearcherReviewC
   return decisions;
 }
 
-function extractPayloadText(envelope: any) {
-  const payloads = Array.isArray(envelope?.result?.payloads) ? envelope.result.payloads : [];
-  const text = payloads
-    .map((payload: any) => (typeof payload?.text === 'string' ? payload.text : ''))
-    .join('\n')
-    .trim();
+async function waitForAssistantReply(args: { sessionKey: string; afterSeq: number; timeoutSeconds: number }) {
+  const deadline = Date.now() + args.timeoutSeconds * 1000;
+
+  while (Date.now() < deadline) {
+    const session = await gatewayCall('sessions.get', { key: args.sessionKey });
+    const messages = Array.isArray(session?.messages) ? (session.messages as OpenClawMessage[]) : [];
+    const assistantReply = messages.find((message) => {
+      const seq = Number(message?.__openclaw?.seq ?? 0);
+      return message?.role === 'assistant' && seq > args.afterSeq;
+    });
+
+    if (assistantReply) {
+      const text = extractAssistantText(assistantReply);
+      if (text) {
+        return text;
+      }
+    }
+
+    await sleep(DEFAULT_POLL_INTERVAL_MS);
+  }
+
+  throw new Error(`Timed out waiting for job-searcher reply on ${args.sessionKey}`);
+}
+
+function extractAssistantText(message: OpenClawMessage) {
+  const text = Array.isArray(message.content)
+    ? message.content
+        .filter((item) => item?.type === 'text' && typeof item?.text === 'string')
+        .map((item) => item.text?.trim() ?? '')
+        .filter(Boolean)
+        .join('\n')
+        .trim()
+    : '';
 
   if (!text) {
     throw new Error('job-searcher returned no text payload');
@@ -320,6 +355,58 @@ function parseInteger(value: string | undefined, fallback: number) {
 
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function detectCurrentOpenClawAgentId() {
+  const explicit = process.env.OPENCLAW_AGENT_ID?.trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  const agentDir = process.env.OPENCLAW_AGENT_DIR?.trim() || process.env.PI_CODING_AGENT_DIR?.trim();
+  if (!agentDir) {
+    return null;
+  }
+
+  return path.basename(agentDir);
+}
+
+function buildReviewSessionKey(runId: string, batchIndex: number) {
+  const safeRunId = runId.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/(^-|-$)/g, '');
+  return `${REVIEW_SESSION_PREFIX}${safeRunId}:b${batchIndex + 1}`;
+}
+
+function buildReviewSessionLabel(runId: string, batchIndex: number) {
+  return `Scout review ${runId} batch ${batchIndex + 1}`;
+}
+
+async function gatewayCall(method: string, params: Record<string, unknown>) {
+  try {
+    const { stdout, stderr } = await execFile(process.env.OPENCLAW_BIN || 'openclaw', ['gateway', 'call', method, '--json', '--params', JSON.stringify(params)], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        OPENCLAW_HIDE_BANNER: '1',
+        OPENCLAW_SUPPRESS_NOTES: '1',
+      },
+      maxBuffer: 10 * 1024 * 1024,
+    });
+
+    if (stderr?.trim()) {
+      throw new Error(stderr.trim());
+    }
+
+    return JSON.parse(stdout);
+  } catch (error: any) {
+    const stdout = typeof error?.stdout === 'string' ? error.stdout.trim() : '';
+    const stderr = typeof error?.stderr === 'string' ? error.stderr.trim() : '';
+    const detail = [getErrorMessage(error), stderr, stdout].filter(Boolean).join('\n');
+    throw new Error(`Gateway call failed (${method}): ${detail}`);
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getErrorMessage(error: unknown) {
