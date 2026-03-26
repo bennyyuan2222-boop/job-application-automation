@@ -173,6 +173,39 @@ export const scoutRunSummarySchema = z.object({
   completedAt: z.string().nullable(),
 });
 
+export const scoutDecisionSummarySchema = z.object({
+  id: z.string(),
+  verdict: z.enum(['shortlist', 'archive', 'defer', 'needs_human_review']),
+  confidence: z.number(),
+  actedAutomatically: z.boolean(),
+  policyVersion: z.string(),
+  reasons: z.array(z.string()),
+  ambiguityFlags: z.array(z.string()),
+});
+
+export const scoutQueueJobSchema = jobListItemSchema.extend({
+  latestDecision: scoutDecisionSummarySchema.nullable(),
+});
+
+export const scoutJobSourceRecordSchema = z.object({
+  sourceKey: z.string(),
+  sourceRecordId: z.string().nullable(),
+  sourceUrl: z.string().nullable(),
+  sourceCompanyName: z.string().nullable(),
+  sourceTitle: z.string().nullable(),
+  sourceLocationText: z.string().nullable(),
+  capturedAt: z.string(),
+  matchType: z.string(),
+  isPrimary: z.boolean(),
+});
+
+export const scoutJobDetailSchema = scoutQueueJobSchema.extend({
+  description: z.string(),
+  salaryText: z.string().nullable(),
+  auditEvents: z.array(auditEventItemSchema),
+  sourceRecords: z.array(scoutJobSourceRecordSchema),
+});
+
 export const applicationDetailSchema = z.object({
   id: z.string(),
   status: z.string(),
@@ -262,6 +295,10 @@ export type ApplicationAttachmentItem = z.infer<typeof applicationAttachmentItem
 export type PortalSessionItem = z.infer<typeof portalSessionItemSchema>;
 export type AuditEventItem = z.infer<typeof auditEventItemSchema>;
 export type ScoutRunSummary = z.infer<typeof scoutRunSummarySchema>;
+export type ScoutDecisionSummary = z.infer<typeof scoutDecisionSummarySchema>;
+export type ScoutQueueJob = z.infer<typeof scoutQueueJobSchema>;
+export type ScoutJobSourceRecord = z.infer<typeof scoutJobSourceRecordSchema>;
+export type ScoutJobDetail = z.infer<typeof scoutJobDetailSchema>;
 export type ApplicationDetail = z.infer<typeof applicationDetailSchema>;
 export type ApplyingQueueItem = z.infer<typeof applyingQueueItemSchema>;
 export type TailoringQueueItem = z.infer<typeof tailoringQueueItemSchema>;

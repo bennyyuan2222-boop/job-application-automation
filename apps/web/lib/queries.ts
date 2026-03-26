@@ -15,6 +15,11 @@ import {
   type TailoringQueueItem,
 } from '@job-ops/contracts';
 import { prisma } from '@job-ops/db';
+import {
+  getInboxJobs as getReadModelInboxJobs,
+  getSeededJobs as getReadModelSeededJobs,
+  getShortlistedJobs as getReadModelShortlistedJobs,
+} from '@job-ops/read-models';
 import { evaluateApplicationReadiness } from '@job-ops/readiness';
 import { coerceResumeDocument } from '@job-ops/tailoring';
 
@@ -124,59 +129,6 @@ function mapTailoringRunSummary(run: {
   };
 }
 
-async function getJobsByStatus(status: 'discovered' | 'shortlisted'): Promise<JobListItem[]> {
-  const jobs = await prisma.job.findMany({
-    where: { status },
-    include: {
-      company: true,
-      scorecards: {
-        orderBy: { scoredAt: 'desc' },
-        take: 1,
-      },
-      applications: {
-        where: {
-          status: {
-            not: 'archived',
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 1,
-      },
-    },
-    orderBy: [{ updatedAt: 'desc' }, { firstSeenAt: 'desc' }],
-  });
-
-  return jobs.map((job) => {
-    const scorecard = job.scorecards[0] ?? null;
-    const activeApplication = job.applications[0] ?? null;
-    return jobListItemSchema.parse({
-      id: job.id,
-      title: job.title,
-      companyName: job.company.name,
-      locationText: job.locationText,
-      status: job.status,
-      priorityScore: scorecard?.priorityScore ?? null,
-      workMode: job.workMode,
-      lastSeenAt: job.lastSeenAt.toISOString(),
-      provenance: {
-        sourceKey: new URL(job.jobUrl).hostname.replace(/^www\./, ''),
-        sourceUrl: job.jobUrl,
-      },
-      rationale: scorecard?.topReasonsJson && Array.isArray(scorecard.topReasonsJson)
-        ? String(scorecard.topReasonsJson[0] ?? '') || null
-        : null,
-      topReasons: asStringArray(scorecard?.topReasonsJson),
-      risks: asStringArray(scorecard?.risksJson),
-      activeApplication: activeApplication
-        ? {
-            id: activeApplication.id,
-            status: activeApplication.status,
-          }
-        : null,
-    });
-  });
-}
-
 export async function getRecentAuditEvents(limit = 20): Promise<AuditEventItem[]> {
   const events = await prisma.auditEvent.findMany({
     orderBy: { createdAt: 'desc' },
@@ -198,48 +150,15 @@ export async function getRecentAuditEvents(limit = 20): Promise<AuditEventItem[]
 }
 
 export async function getSeededJobs(): Promise<JobListItem[]> {
-  const jobs = await prisma.job.findMany({
-    include: {
-      company: true,
-      scorecards: {
-        orderBy: { scoredAt: 'desc' },
-        take: 1,
-      },
-    },
-    orderBy: { updatedAt: 'desc' },
-    take: 10,
-  });
-
-  return jobs.map((job) => {
-    const scorecard = job.scorecards[0] ?? null;
-    return jobListItemSchema.parse({
-      id: job.id,
-      title: job.title,
-      companyName: job.company.name,
-      locationText: job.locationText,
-      status: job.status,
-      priorityScore: scorecard?.priorityScore ?? null,
-      workMode: job.workMode,
-      lastSeenAt: job.lastSeenAt.toISOString(),
-      provenance: {
-        sourceKey: new URL(job.jobUrl).hostname.replace(/^www\./, ''),
-        sourceUrl: job.jobUrl,
-      },
-      rationale: scorecard?.topReasonsJson && Array.isArray(scorecard.topReasonsJson)
-        ? String(scorecard.topReasonsJson[0] ?? '') || null
-        : null,
-      topReasons: asStringArray(scorecard?.topReasonsJson),
-      risks: asStringArray(scorecard?.risksJson),
-    });
-  });
+  return getReadModelSeededJobs();
 }
 
 export async function getInboxJobs(): Promise<JobListItem[]> {
-  return getJobsByStatus('discovered');
+  return getReadModelInboxJobs();
 }
 
 export async function getShortlistedJobs(): Promise<JobListItem[]> {
-  return getJobsByStatus('shortlisted');
+  return getReadModelShortlistedJobs();
 }
 
 async function getOperationalApplicationQueue(

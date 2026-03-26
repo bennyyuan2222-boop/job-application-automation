@@ -1,24 +1,7 @@
-import { JobStatus, prisma } from '@job-ops/db';
+import Link from 'next/link';
 
-type ScoutDecisionVerdict = 'shortlist' | 'archive' | 'defer' | 'needs_human_review';
-
-type InboxJob = {
-  id: string;
-  title: string;
-  status: string;
-  companyName: string;
-  locationText: string;
-  priorityScore: number | null;
-  latestDecision: {
-    id: string;
-    verdict: ScoutDecisionVerdict;
-    confidence: number;
-    actedAutomatically: boolean;
-    policyVersion: string;
-    reasons: string[];
-    ambiguityFlags: string[];
-  } | null;
-};
+import { type ScoutQueueJob } from '@job-ops/contracts';
+import { getInboxScoutJobs } from '@job-ops/read-models';
 
 function formatConfidence(value: number | null | undefined) {
   if (typeof value !== 'number') {
@@ -29,45 +12,7 @@ function formatConfidence(value: number | null | undefined) {
 }
 
 export default async function InboxPage() {
-  const rawJobs = await prisma.job.findMany({
-    where: {
-      status: JobStatus.discovered,
-    },
-    include: {
-      company: true,
-      scorecards: {
-        orderBy: { scoredAt: 'desc' },
-        take: 1,
-      },
-      scoutDecisions: {
-        orderBy: { createdAt: 'desc' },
-        take: 1,
-      },
-    },
-    orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
-    take: 50,
-  });
-
-  const jobs: InboxJob[] = rawJobs.map((job: any) => ({
-    id: job.id,
-    title: job.title,
-    status: String(job.status),
-    companyName: job.company.name,
-    locationText: job.locationText,
-    priorityScore: job.scorecards?.[0]?.priorityScore ?? null,
-    latestDecision: job.scoutDecisions?.[0]
-      ? {
-          id: job.scoutDecisions[0].id,
-          verdict: String(job.scoutDecisions[0].verdict) as ScoutDecisionVerdict,
-          confidence: Number(job.scoutDecisions[0].confidence ?? 0),
-          actedAutomatically: Boolean(job.scoutDecisions[0].actedAutomatically),
-          policyVersion: String(job.scoutDecisions[0].policyVersion ?? 'unknown'),
-          reasons: asStringArray(job.scoutDecisions[0].reasonsJson),
-          ambiguityFlags: asStringArray(job.scoutDecisions[0].ambiguityFlagsJson),
-        }
-      : null,
-  }));
-
+  const jobs = await getInboxScoutJobs();
   const needsHumanReview = jobs.filter((job) => job.latestDecision?.verdict === 'needs_human_review');
   const otherDiscovered = jobs.filter((job) => job.latestDecision?.verdict !== 'needs_human_review');
 
@@ -97,7 +42,7 @@ export default async function InboxPage() {
   );
 }
 
-function JobList({ jobs, emptyMessage }: { jobs: InboxJob[]; emptyMessage: string }) {
+function JobList({ jobs, emptyMessage }: { jobs: ScoutQueueJob[]; emptyMessage: string }) {
   if (jobs.length === 0) {
     return <p className="muted">{emptyMessage}</p>;
   }
@@ -160,10 +105,13 @@ function JobList({ jobs, emptyMessage }: { jobs: InboxJob[]; emptyMessage: strin
             )}
 
             <div style={{ display: 'flex', gap: '.75rem', marginTop: '1rem', flexWrap: 'wrap' }}>
-              <form method="post" action={`/api/actions/jobs/${job.id}/shortlist`}>
+              <Link href={`/jobs/${job.id}`} className="button-link secondary">
+                Details
+              </Link>
+              <form method="post" action={`/api/actions/jobs/${job.id}/shortlist?next=/inbox`}>
                 <button type="submit">Shortlist</button>
               </form>
-              <form method="post" action={`/api/actions/jobs/${job.id}/archive`}>
+              <form method="post" action={`/api/actions/jobs/${job.id}/archive?next=/inbox`}>
                 <button type="submit">Archive</button>
               </form>
             </div>
@@ -172,12 +120,4 @@ function JobList({ jobs, emptyMessage }: { jobs: InboxJob[]; emptyMessage: strin
       })}
     </div>
   );
-}
-
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter((item): item is string => typeof item === 'string');
 }

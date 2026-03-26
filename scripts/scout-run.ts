@@ -1,6 +1,7 @@
 import { prisma } from '@job-ops/db';
 import { runScoutIngestion } from '../workers/scout/index.js';
 import {
+  broaderScoutPreferenceSource,
   buildScoutIdempotencyKey,
   initialScoutProfile,
   isScoutProvider,
@@ -47,7 +48,7 @@ function parseArgs(argv: string[]): ScoutRunCliOptions {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const resolved = await resolveScoutRunInput(options);
-  const idempotencyKey = buildScoutIdempotencyKey(resolved.provider, options.trigger);
+  const idempotencyKey = buildScoutIdempotencyKey(resolved.provider, options.trigger, resolved.profile);
   const { run, reusedExistingRun } = await runScoutIngestion({
     ...resolved.runInput,
     triggerType: options.trigger,
@@ -96,6 +97,7 @@ async function main() {
         reusedExistingRun,
         caveat: resolved.caveat ?? null,
         initialProfileDefaults: initialScoutProfile,
+        broaderPreferenceSource: broaderScoutPreferenceSource,
       },
       null,
       2,

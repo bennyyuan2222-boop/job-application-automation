@@ -2,8 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-JOBSPY_SERVER_ENTRY_DEFAULT="/Users/clawbot/.openclaw/workspace/job-search/mcp/vendors/jobspy-mcp-server/src/index.js"
+JOBSPY_SERVER_ENTRY_DEFAULT="$ROOT_DIR/legacy/source-job-search-workspace/mcp/vendors/jobspy-mcp-server/src/index.js"
+JOBSPY_SERVER_ENTRY_FALLBACK="/Users/clawbot/.openclaw/workspace/job-search/mcp/vendors/jobspy-mcp-server/src/index.js"
 JOBSPY_SERVER_ENTRY="${JOBSPY_SERVER_ENTRY:-$JOBSPY_SERVER_ENTRY_DEFAULT}"
+if [[ ! -f "$JOBSPY_SERVER_ENTRY" ]] && [[ -f "$JOBSPY_SERVER_ENTRY_FALLBACK" ]]; then
+  JOBSPY_SERVER_ENTRY="$JOBSPY_SERVER_ENTRY_FALLBACK"
+fi
 JOBSPY_HTTP_PORT="${JOBSPY_HTTP_PORT:-9943}"
 JOBSPY_MCP_URL_DEFAULT="http://127.0.0.1:${JOBSPY_HTTP_PORT}"
 JOBSPY_MCP_URL="${JOBSPY_MCP_URL:-$JOBSPY_MCP_URL_DEFAULT}"

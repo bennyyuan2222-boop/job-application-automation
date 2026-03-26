@@ -1,9 +1,11 @@
 import type { RawScoutJobInput } from '@job-ops/domain';
 import type { RunScoutIngestionInput } from '../workers/scout/index.js';
 import {
+  broaderScoutPreferenceSource,
   buildInitialScoutFixtureRunInput,
   buildScoutSourceKey,
   initialScoutProfile,
+  type ScoutProfile,
   type ScoutProvider,
   type ScoutRunTrigger,
 } from './scout-profile.js';
@@ -15,7 +17,7 @@ type ResolveScoutRunInputOptions = {
 
 type ResolveScoutRunInputResult = {
   provider: ScoutProvider;
-  profile: typeof initialScoutProfile & { provider: ScoutProvider };
+  profile: ScoutProfile & { provider: ScoutProvider };
   runInput: RunScoutIngestionInput;
   caveat?: string;
 };
@@ -56,8 +58,10 @@ export async function resolveScoutRunInput(
     return {
       provider: options.provider,
       profile: { ...initialScoutProfile, provider: options.provider },
-      runInput: buildInitialScoutFixtureRunInput(options.trigger),
-      caveat: 'Fixture-backed entrypoint is live. Real JobSpy MCP fetching is optional, but no longer the only path.',
+      runInput: buildInitialScoutFixtureRunInput(options.trigger, initialScoutProfile),
+      caveat: broaderScoutPreferenceSource.exists
+        ? `Fixture-backed entrypoint is live. Active v1 Scout profile stays narrow while broader preferences come from ${broaderScoutPreferenceSource.path}.`
+        : 'Fixture-backed entrypoint is live. Real JobSpy MCP fetching is optional, but no longer the only path.',
     };
   }
 
@@ -68,10 +72,11 @@ async function buildJobSpyMcpRunInput(
   trigger: ScoutRunTrigger,
 ): Promise<ResolveScoutRunInputResult> {
   const provider: ScoutProvider = 'jobspy-mcp';
+  const profile = initialScoutProfile;
   const sourceKey = buildScoutSourceKey(provider);
   const apiUrl = buildJobSpyApiUrl();
-  const requestedResults = parseInteger(process.env.SCOUT_RESULTS_WANTED, initialScoutProfile.resultsWanted);
-  const hoursOld = parseInteger(process.env.SCOUT_HOURS_OLD, initialScoutProfile.hoursOld);
+  const requestedResults = parseInteger(process.env.SCOUT_RESULTS_WANTED, profile.resultsWanted);
+  const hoursOld = parseInteger(process.env.SCOUT_HOURS_OLD, profile.hoursOld);
   const timeoutMs = parseInteger(process.env.JOBSPY_MCP_TIMEOUT_MS, 120_000);
 
   const response = await fetch(apiUrl, {
@@ -80,12 +85,12 @@ async function buildJobSpyMcpRunInput(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      siteNames: initialScoutProfile.board,
-      searchTerm: initialScoutProfile.searchTerm,
-      location: initialScoutProfile.searchLocation,
+      siteNames: profile.board,
+      searchTerm: profile.searchTerm,
+      location: profile.searchLocation,
       resultsWanted: requestedResults,
       hoursOld,
-      countryIndeed: process.env.SCOUT_COUNTRY_INDEED ?? initialScoutProfile.countryIndeed,
+      countryIndeed: process.env.SCOUT_COUNTRY_INDEED ?? profile.countryIndeed,
       descriptionFormat: 'markdown',
       format: 'json',
     }),
@@ -107,18 +112,18 @@ async function buildJobSpyMcpRunInput(
 
   return {
     provider,
-    profile: { ...initialScoutProfile, provider },
+    profile: { ...profile, provider },
     runInput: {
       sourceKey,
-      searchTerm: initialScoutProfile.searchTerm,
-      searchLocation: initialScoutProfile.searchLocation,
+      searchTerm: profile.searchTerm,
+      searchLocation: profile.searchLocation,
       actorLabel: `scout-${trigger}-jobspy-mcp`,
       triggerType: trigger,
       fetchedCount: jobs.length,
       rejectedCount: droppedCount,
       queryJson: {
         providerKey: provider,
-        boardKey: initialScoutProfile.board,
+        boardKey: profile.board,
         triggerType: trigger,
         url: apiUrl,
         requestedResults,
@@ -126,10 +131,13 @@ async function buildJobSpyMcpRunInput(
         mappedCount: mappedRecords.length,
         droppedCount,
         hoursOld,
+        preferenceSourcePath: broaderScoutPreferenceSource.path,
+        broaderPrimaryRoles: broaderScoutPreferenceSource.primaryTargetRoles,
+        broaderPreferredCities: broaderScoutPreferenceSource.preferredCities,
       },
       notes: [
         `provider=${provider}`,
-        `board=${initialScoutProfile.board}`,
+        `board=${profile.board}`,
         `url=${apiUrl}`,
         `requested=${requestedResults}`,
         `received=${jobs.length}`,

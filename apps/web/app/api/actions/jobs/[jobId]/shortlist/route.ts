@@ -1,13 +1,29 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { ActorType, JobStatus, prisma } from '@job-ops/db';
 import { makeAuditEvent } from '@job-ops/domain';
 
-export async function POST(request: Request, context: any) {
-  const params = await context.params;
+import { sameOriginUrl } from '../../../../../../lib/redirects';
+import { requireRouteSession } from '../../../../../../lib/route-auth';
 
-  await prisma.$transaction(async (tx: any) => {
+function resolveNextPath(request: NextRequest, fallbackPath: string) {
+  const nextPath = request.nextUrl.searchParams.get('next');
+  if (!nextPath || !nextPath.startsWith('/') || nextPath.startsWith('//')) {
+    return fallbackPath;
+  }
+
+  return nextPath;
+}
+
+export async function POST(request: NextRequest, context: { params: Promise<{ jobId: string }> }) {
+  const auth = await requireRouteSession(request);
+  if (!auth.ok) return auth.response;
+
+  const { session } = auth;
+  const { jobId } = await context.params;
+
+  await prisma.$transaction(async (tx) => {
     const job = await tx.job.findUnique({
-      where: { id: params.jobId },
+      where: { id: jobId },
       include: {
         scoutDecisions: {
           orderBy: { createdAt: 'desc' },
@@ -17,14 +33,14 @@ export async function POST(request: Request, context: any) {
     });
 
     if (!job) {
-      throw new Error(`Job not found: ${params.jobId}`);
+      throw new Error(`Job not found: ${jobId}`);
     }
 
     const latestDecision = job.scoutDecisions?.[0] ?? null;
     const previousStatus = job.status;
 
     await tx.job.update({
-      where: { id: params.jobId },
+      where: { id: jobId },
       data: { status: JobStatus.shortlisted },
     });
 
@@ -41,11 +57,11 @@ export async function POST(request: Request, context: any) {
           entityId: job.id,
           eventType: 'job.shortlisted',
           actorType: ActorType.user,
-          actorLabel: 'benny-manual',
+          actorLabel: session.email,
           beforeState: { status: previousStatus },
           afterState: { status: JobStatus.shortlisted },
           payloadJson: {
-            source: 'manual_inbox_action',
+            source: 'manual_web_action',
             scoutDecisionId: latestDecision?.id ?? null,
             feedbackType,
           },
@@ -55,7 +71,7 @@ export async function POST(request: Request, context: any) {
           entityId: job.id,
           eventType: 'scout.feedback_recorded',
           actorType: ActorType.user,
-          actorLabel: 'benny-manual',
+          actorLabel: session.email,
           payloadJson: {
             actionTaken: 'shortlist',
             feedbackType,
@@ -68,5 +84,5 @@ export async function POST(request: Request, context: any) {
     });
   });
 
-  return NextResponse.redirect(new URL('/inbox', request.url));
+  return NextResponse.redirect(sameOriginUrl(request, resolveNextPath(request, '/inbox')));
 }

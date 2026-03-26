@@ -37,6 +37,9 @@ export default async function ShortlistPage() {
                 {job.rationale ? <p>{job.rationale}</p> : null}
 
                 <div className="button-row">
+                  <Link href={`/jobs/${job.id}`} className="button-link secondary">
+                    Details
+                  </Link>
                   {job.activeApplication ? (
                     <Link
                       href={job.activeApplication.status === 'applying' || job.activeApplication.status === 'submit_review' || job.activeApplication.status === 'submitted'
@@ -51,7 +54,7 @@ export default async function ShortlistPage() {
                       <button type="submit">Start application</button>
                     </form>
                   )}
-                  <form method="get" action={`/api/actions/jobs/${job.id}/archive`}>
+                  <form method="post" action={`/api/actions/jobs/${job.id}/archive?next=/shortlist`}>
                     <button type="submit" className="button-link secondary">Archive</button>
                   </form>
                 </div>

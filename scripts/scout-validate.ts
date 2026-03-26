@@ -1,6 +1,7 @@
 import { prisma } from '@job-ops/db';
 import { runScoutIngestion } from '../workers/scout/index.js';
 import {
+  broaderScoutPreferenceSource,
   buildScoutIdempotencyKey,
   initialScoutProfile,
   isScoutProvider,
@@ -21,7 +22,7 @@ async function main() {
   const result = await runScoutIngestion({
     ...resolved.runInput,
     triggerType: 'test',
-    idempotencyKey: buildScoutIdempotencyKey(provider, 'test'),
+    idempotencyKey: buildScoutIdempotencyKey(provider, 'test', resolved.profile),
   });
 
   const decisionSummary = await prisma.scoutDecision.groupBy({
@@ -63,6 +64,7 @@ async function main() {
     JSON.stringify(
       {
         initialProfileDefaults: initialScoutProfile,
+        broaderPreferenceSource: broaderScoutPreferenceSource,
         provider,
         profile: resolved.profile,
         caveat: resolved.caveat ?? null,
