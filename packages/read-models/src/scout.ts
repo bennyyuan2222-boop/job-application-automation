@@ -52,6 +52,16 @@ function isMissingScoutRunTelemetryError(error: unknown) {
   );
 }
 
+function isMissingScoutDecisionTableError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code ?? '') : '';
+
+  return (
+    code === 'P2021' &&
+    (/ScoutDecision/i.test(message) || /public\.ScoutDecision/i.test(message) || /"ScoutDecision"/i.test(message))
+  );
+}
+
 function provenanceFromJobUrl(jobUrl: string) {
   try {
     const url = new URL(jobUrl);
@@ -135,33 +145,63 @@ function mapScoutQueueJob(job: any): ScoutQueueJob {
 }
 
 async function getScoutQueue(status: ScoutQueueStatus): Promise<ScoutQueueJob[]> {
-  const jobs = await prisma.job.findMany({
-    where: { status },
-    include: {
-      company: true,
-      scorecards: {
-        orderBy: { scoredAt: 'desc' },
-        take: 1,
-      },
-      applications: {
-        where: {
-          status: {
-            not: 'archived',
-          },
+  try {
+    const jobs = await prisma.job.findMany({
+      where: { status },
+      include: {
+        company: true,
+        scorecards: {
+          orderBy: { scoredAt: 'desc' },
+          take: 1,
         },
-        orderBy: { createdAt: 'desc' },
-        take: 1,
+        applications: {
+          where: {
+            status: {
+              not: 'archived',
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+        scoutDecisions: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
       },
-      scoutDecisions: {
-        orderBy: { createdAt: 'desc' },
-        take: 1,
-      },
-    },
-    orderBy: [{ updatedAt: 'desc' }, { lastSeenAt: 'desc' }],
-    take: 50,
-  });
+      orderBy: [{ updatedAt: 'desc' }, { lastSeenAt: 'desc' }],
+      take: 50,
+    });
 
-  return jobs.map(mapScoutQueueJob);
+    return jobs.map(mapScoutQueueJob);
+  } catch (error) {
+    if (!isMissingScoutDecisionTableError(error)) {
+      throw error;
+    }
+
+    const jobs = await prisma.job.findMany({
+      where: { status },
+      include: {
+        company: true,
+        scorecards: {
+          orderBy: { scoredAt: 'desc' },
+          take: 1,
+        },
+        applications: {
+          where: {
+            status: {
+              not: 'archived',
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
+      orderBy: [{ updatedAt: 'desc' }, { lastSeenAt: 'desc' }],
+      take: 50,
+    });
+
+    return jobs.map((job) => mapScoutQueueJob({ ...job, scoutDecisions: [] }));
+  }
 }
 
 export async function getInboxScoutJobs(): Promise<ScoutQueueJob[]> {
@@ -185,36 +225,75 @@ export async function getSeededJobs(): Promise<JobListItem[]> {
 }
 
 export async function getScoutJobDetail(jobId: string): Promise<ScoutJobDetail | null> {
-  const job = await prisma.job.findUnique({
-    where: { id: jobId },
-    include: {
-      company: true,
-      scorecards: {
-        orderBy: { scoredAt: 'desc' },
-        take: 1,
-      },
-      applications: {
-        where: {
-          status: {
-            not: 'archived',
+  let job: any;
+
+  try {
+    job = await prisma.job.findUnique({
+      where: { id: jobId },
+      include: {
+        company: true,
+        scorecards: {
+          orderBy: { scoredAt: 'desc' },
+          take: 1,
+        },
+        applications: {
+          where: {
+            status: {
+              not: 'archived',
+            },
           },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
         },
-        orderBy: { createdAt: 'desc' },
-        take: 1,
-      },
-      scoutDecisions: {
-        orderBy: { createdAt: 'desc' },
-        take: 1,
-      },
-      sourceLinks: {
-        include: {
-          sourceRecord: true,
+        scoutDecisions: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
         },
-        orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }],
-        take: 10,
+        sourceLinks: {
+          include: {
+            sourceRecord: true,
+          },
+          orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }],
+          take: 10,
+        },
       },
-    },
-  });
+    });
+  } catch (error) {
+    if (!isMissingScoutDecisionTableError(error)) {
+      throw error;
+    }
+
+    job = await prisma.job.findUnique({
+      where: { id: jobId },
+      include: {
+        company: true,
+        scorecards: {
+          orderBy: { scoredAt: 'desc' },
+          take: 1,
+        },
+        applications: {
+          where: {
+            status: {
+              not: 'archived',
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+        sourceLinks: {
+          include: {
+            sourceRecord: true,
+          },
+          orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }],
+          take: 10,
+        },
+      },
+    });
+
+    if (job) {
+      job = { ...job, scoutDecisions: [] };
+    }
+  }
 
   if (!job) {
     return null;
@@ -245,7 +324,7 @@ export async function getScoutJobDetail(jobId: string): Promise<ScoutJobDetail |
       createdAt: event.createdAt.toISOString(),
       payloadJson: event.payloadJson,
     })),
-    sourceRecords: job.sourceLinks.map((link) => ({
+    sourceRecords: job.sourceLinks.map((link: any) => ({
       sourceKey: link.sourceRecord.sourceKey,
       sourceRecordId: link.sourceRecord.sourceRecordId ?? null,
       sourceUrl: link.sourceRecord.sourceUrl ?? null,
