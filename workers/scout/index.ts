@@ -1,6 +1,7 @@
 import { ActorType, JobStatus, Prisma } from '@job-ops/db';
 import { prisma } from '@job-ops/db';
 import { makeAuditEvent, normalizeScoutJob, scoreScoutJob, type RawScoutJobInput } from '@job-ops/domain';
+import { loadScoutLearningSignal, type ScoutLearningSignal } from './learning';
 
 export const scoutRunTriggerTypes = ['scheduled', 'manual', 'backfill', 'test'] as const;
 export type ScoutRunTriggerType = (typeof scoutRunTriggerTypes)[number];
@@ -115,7 +116,8 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
         capturedCount += 1;
         normalizedCount += 1;
 
-        const decisionDraft = buildScoutDecisionDraft(normalized, score);
+        const learningSignal = await loadScoutLearningSignal(normalized.normalizedTitle);
+        const decisionDraft = buildScoutDecisionDraft(normalized, score, learningSignal);
 
         const existingJob = await prisma.job.findFirst({
           where: {
@@ -444,6 +446,7 @@ async function persistScoutDecision(args: {
 function buildScoutDecisionDraft(
   normalized: ReturnType<typeof normalizeScoutJob>,
   score: ReturnType<typeof scoreScoutJob>,
+  learningSignal: ScoutLearningSignal,
 ): ScoutDecisionDraft {
   const title = normalized.normalizedTitle;
   const isExactDataAnalyst = title.includes('data analyst');
@@ -456,7 +459,7 @@ function buildScoutDecisionDraft(
 
   const ambiguityFlags: string[] = [];
 
-  if (!isExactDataAnalyst && isAdjacentAnalyst) {
+  if (!isExactDataAnalyst && isAdjacentAnalyst && !learningSignal.suppressAdjacentAmbiguity) {
     ambiguityFlags.push('adjacent_analyst_title');
   }
 
@@ -480,12 +483,20 @@ function buildScoutDecisionDraft(
     ambiguityFlags.push('high_risk_count');
   }
 
+  if (learningSignal.archiveConfidenceDelta > learningSignal.shortlistConfidenceDelta) {
+    ambiguityFlags.push('historical_archive_bias');
+  }
+
   const reasons = [...score.topReasons.slice(0, 3)];
 
   if (isExactDataAnalyst) {
     reasons.push('Exact data analyst title match.');
   } else if (isAdjacentAnalyst) {
-    reasons.push('Adjacent analyst title needs human review.');
+    reasons.push(
+      learningSignal.suppressAdjacentAmbiguity
+        ? 'Adjacent analyst title has positive manual-override history.'
+        : 'Adjacent analyst title needs human review.',
+    );
   } else {
     reasons.push('Title does not clearly match the target profile.');
   }
@@ -494,11 +505,26 @@ function buildScoutDecisionDraft(
     reasons.push('Salary is missing, so upside is less certain.');
   }
 
+  if (learningSignal.notes.length > 0) {
+    reasons.push(...learningSignal.notes);
+  }
+
   const shortlistConfidence = clamp(
-    0.56 + score.priorityScore / 240 + score.fitScore / 260 - ambiguityFlags.length * 0.08 - score.risks.length * 0.04,
+    0.56 +
+      score.priorityScore / 240 +
+      score.fitScore / 260 +
+      learningSignal.shortlistConfidenceDelta -
+      learningSignal.archiveConfidenceDelta * 0.45 -
+      ambiguityFlags.length * 0.08 -
+      score.risks.length * 0.04,
   );
   const archiveConfidence = clamp(
-    0.48 + (100 - score.priorityScore) / 210 + (100 - score.fitScore) / 260 + score.risks.length * 0.06,
+    0.48 +
+      (100 - score.priorityScore) / 210 +
+      (100 - score.fitScore) / 260 +
+      learningSignal.archiveConfidenceDelta -
+      learningSignal.shortlistConfidenceDelta * 0.45 +
+      score.risks.length * 0.06,
   );
 
   if (isExactDataAnalyst && score.priorityScore >= 78 && score.fitScore >= 72 && score.risks.length <= 1) {
@@ -530,7 +556,9 @@ function buildScoutDecisionDraft(
   if (ambiguityFlags.length > 0 || score.priorityScore >= 68 || score.fitScore >= 65) {
     return {
       verdict: 'needs_human_review',
-      confidence: clamp(0.62 + score.priorityScore / 400 - ambiguityFlags.length * 0.03),
+      confidence: clamp(
+        0.62 + score.priorityScore / 400 + learningSignal.shortlistConfidenceDelta * 0.5 - ambiguityFlags.length * 0.03,
+      ),
       reasons: [...reasons, 'Ambiguity flags require human review before acting automatically.'],
       ambiguityFlags,
       actedAutomatically: false,
@@ -541,7 +569,7 @@ function buildScoutDecisionDraft(
 
   return {
     verdict: 'defer',
-    confidence: clamp(0.52 + score.priorityScore / 500),
+    confidence: clamp(0.52 + score.priorityScore / 500 + learningSignal.shortlistConfidenceDelta * 0.3),
     reasons: [...reasons, 'Not a strong enough match to auto-act, but not weak enough to auto-archive.'],
     ambiguityFlags,
     actedAutomatically: false,

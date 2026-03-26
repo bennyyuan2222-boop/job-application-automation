@@ -381,26 +381,10 @@ model ScoutDecision {
   actedAutomatically Boolean                @default(false)
   policyVersion      String
   createdAt          DateTime               @default(now())
-  feedbackEntries    ScoutDecisionFeedback[]
 
   @@unique([jobId, scrapeRunId])
   @@index([jobId, createdAt])
   @@index([scrapeRunId, createdAt])
-}
-
-model ScoutDecisionFeedback {
-  id              String             @id @default(cuid())
-  jobId           String
-  job             Job                @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  scoutDecisionId String?
-  scoutDecision   ScoutDecision?     @relation(fields: [scoutDecisionId], references: [id], onDelete: SetNull)
-  actionTaken     ScoutFeedbackAction
-  feedbackType    ScoutFeedbackType
-  actorLabel      String
-  createdAt       DateTime           @default(now())
-
-  @@index([jobId, createdAt])
-  @@index([scoutDecisionId])
 }
 
 model AuditEvent {

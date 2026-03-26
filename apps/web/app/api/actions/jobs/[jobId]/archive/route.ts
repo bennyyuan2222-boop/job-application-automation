@@ -34,16 +34,6 @@ export async function POST(request: Request, context: any) {
         ? 'agree'
         : 'override';
 
-    const feedback = await tx.scoutDecisionFeedback.create({
-      data: {
-        jobId: job.id,
-        scoutDecisionId: latestDecision?.id ?? null,
-        actionTaken: 'archive',
-        feedbackType,
-        actorLabel: 'benny-manual',
-      },
-    });
-
     await tx.auditEvent.createMany({
       data: [
         makeAuditEvent({
@@ -57,7 +47,7 @@ export async function POST(request: Request, context: any) {
           payloadJson: {
             source: 'manual_inbox_action',
             scoutDecisionId: latestDecision?.id ?? null,
-            feedbackId: feedback.id,
+            feedbackType,
           },
         }),
         makeAuditEvent({
@@ -72,7 +62,6 @@ export async function POST(request: Request, context: any) {
             scoutDecisionId: latestDecision?.id ?? null,
             scoutVerdict: latestDecision?.verdict ?? null,
             scoutConfidence: latestDecision?.confidence ?? null,
-            feedbackId: feedback.id,
           },
         }),
       ],
