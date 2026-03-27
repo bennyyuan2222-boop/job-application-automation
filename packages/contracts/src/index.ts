@@ -8,6 +8,22 @@ export const provenanceSchema = z
   .nullable()
   .optional();
 
+export const postingCheckStatusSchema = z.enum(['live', 'probably_live', 'uncertain', 'dead']);
+
+export const postingCheckSummarySchema = z.object({
+  id: z.string(),
+  status: postingCheckStatusSchema,
+  checkerType: z.string(),
+  checkerLabel: z.string(),
+  checkedAt: z.string(),
+  originalUrl: z.string().nullable(),
+  finalUrl: z.string().nullable(),
+  replacementUrl: z.string().nullable(),
+  sourceBoard: z.string().nullable(),
+  evidence: z.array(z.string()).default([]),
+  notes: z.string().nullable(),
+});
+
 export const jobListItemSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -21,6 +37,7 @@ export const jobListItemSchema = z.object({
   rationale: z.string().nullable().optional(),
   topReasons: z.array(z.string()).default([]),
   risks: z.array(z.string()).default([]),
+  latestPostingCheck: postingCheckSummarySchema.nullable().optional(),
   activeApplication: z
     .object({
       id: z.string(),
@@ -110,6 +127,27 @@ export const tailoringGenerationMetadataSchema = z.object({
   totalTokens: z.number().int().nonnegative().nullable().optional(),
   sessionKey: z.string().nullable().optional(),
   sourceTailoringRunId: z.string().nullable().optional(),
+});
+
+export const needleAgentDraftSchema = z.object({
+  title: z.string(),
+  contentMarkdown: z.string().min(1),
+  changeSummary: z.array(z.string()).default([]),
+  rationale: z.array(z.string()).default([]),
+  risks: z.array(tailoringRiskSchema).default([]),
+});
+
+export const needleAgentResponseSchema = z.object({
+  contractVersion: z.string().default('needle-tailoring-v1'),
+  fitAssessment: tailoringFitAssessmentSchema,
+  baseSelection: tailoringBaseSelectionSchema,
+  draft: needleAgentDraftSchema,
+  generation: z.object({
+    strategyVersion: z.string(),
+    promptVersion: z.string().nullable().optional(),
+    modelId: z.string().nullable().optional(),
+    provider: z.string().nullable().optional(),
+  }),
 });
 
 export const tailoringRunSummarySchema = z.object({
@@ -328,6 +366,8 @@ export const tailoringDetailSchema = z.object({
 });
 
 export type Provenance = z.infer<typeof provenanceSchema>;
+export type PostingCheckStatus = z.infer<typeof postingCheckStatusSchema>;
+export type PostingCheckSummary = z.infer<typeof postingCheckSummarySchema>;
 export type JobListItem = z.infer<typeof jobListItemSchema>;
 export type ResumeEntry = z.infer<typeof resumeEntrySchema>;
 export type ResumeSection = z.infer<typeof resumeSectionSchema>;
@@ -338,6 +378,8 @@ export type TailoringRisk = z.infer<typeof tailoringRiskSchema>;
 export type TailoringFitAssessment = z.infer<typeof tailoringFitAssessmentSchema>;
 export type TailoringBaseSelection = z.infer<typeof tailoringBaseSelectionSchema>;
 export type TailoringGenerationMetadata = z.infer<typeof tailoringGenerationMetadataSchema>;
+export type NeedleAgentDraft = z.infer<typeof needleAgentDraftSchema>;
+export type NeedleAgentResponse = z.infer<typeof needleAgentResponseSchema>;
 export type TailoringRunSummary = z.infer<typeof tailoringRunSummarySchema>;
 export type ReadinessIssue = z.infer<typeof readinessIssueSchema>;
 export type ReadinessSummary = z.infer<typeof readinessSummarySchema>;

@@ -37,6 +37,9 @@ export default async function TailoringDetailPage({ params }: { params: Promise<
           <div className="metric-card">
             <span>Latest run</span>
             <strong>{detail.latestRun?.status ?? 'none'}</strong>
+            {detail.latestRun?.generationMetadata?.executionMode ? (
+              <span className="muted small">{detail.latestRun.generationMetadata.executionMode}</span>
+            ) : null}
           </div>
           <div className="metric-card">
             <span>Approved resume</span>
@@ -44,6 +47,12 @@ export default async function TailoringDetailPage({ params }: { params: Promise<
           </div>
         </div>
         {detail.pausedReason ? <p className="error-banner">Paused: {detail.pausedReason}</p> : null}
+        {detail.latestRun?.failureCode ? (
+          <p className="error-banner">
+            Latest run failed: <strong>{detail.latestRun.failureCode}</strong>
+            {detail.latestRun.failureMessage ? ` — ${detail.latestRun.failureMessage}` : ''}
+          </p>
+        ) : null}
       </section>
 
       <section className="grid-two layout-job-review">
@@ -128,6 +137,101 @@ export default async function TailoringDetailPage({ params }: { params: Promise<
         </div>
       </section>
 
+      {detail.latestRun &&
+      (detail.latestRun.fitAssessment ||
+        detail.latestRun.generationMetadata ||
+        detail.latestRun.baseSelection ||
+        detail.latestRun.failureCode) ? (
+        <section className="grid-two">
+          <div className="panel">
+            <p className="eyebrow">Fit assessment</p>
+            {detail.latestRun.fitAssessment ? (
+              <>
+                <h2>
+                  {detail.latestRun.fitAssessment.verdict.replaceAll('_', ' ')} ·{' '}
+                  {detail.latestRun.fitAssessment.proceedRecommendation.replaceAll('_', ' ')}
+                </h2>
+                <p className="long-copy">{detail.latestRun.fitAssessment.summary}</p>
+                <div className="grid-two compact-grid">
+                  <div>
+                    <h3>Matched strengths</h3>
+                    <ul className="simple-list compact-list">
+                      {detail.latestRun.fitAssessment.matchedStrengths.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <h3>Likely gaps</h3>
+                    <ul className="simple-list compact-list">
+                      {detail.latestRun.fitAssessment.likelyGaps.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+                {detail.latestRun.fitAssessment.riskNotes.length ? (
+                  <div>
+                    <h3>Risk notes</h3>
+                    <ul className="simple-list compact-list">
+                      {detail.latestRun.fitAssessment.riskNotes.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <p className="muted">No fit assessment is available for the latest run.</p>
+            )}
+          </div>
+          <div className="panel">
+            <p className="eyebrow">Generation metadata</p>
+            <ul className="simple-list compact-list">
+              <li>
+                <strong>Execution mode</strong> — {detail.latestRun.generationMetadata?.executionMode ?? 'unknown'}
+              </li>
+              <li>
+                <strong>Strategy</strong> — {detail.latestRun.generationMetadata?.strategyVersion ?? 'unknown'}
+              </li>
+              <li>
+                <strong>Provider</strong> — {detail.latestRun.generationMetadata?.provider ?? 'unknown'}
+              </li>
+              <li>
+                <strong>Model</strong> — {detail.latestRun.generationMetadata?.modelId ?? 'n/a'}
+              </li>
+              <li>
+                <strong>Latency</strong> —
+                {' '}
+                {typeof detail.latestRun.generationMetadata?.latencyMs === 'number'
+                  ? `${detail.latestRun.generationMetadata.latencyMs} ms`
+                  : 'n/a'}
+              </li>
+              <li>
+                <strong>Session key</strong> — {detail.latestRun.generationMetadata?.sessionKey ?? 'n/a'}
+              </li>
+              <li>
+                <strong>Source run</strong> — {detail.latestRun.sourceTailoringRunId ?? 'n/a'}
+              </li>
+            </ul>
+            {detail.latestRun.baseSelection ? (
+              <>
+                <h3>Base selection</h3>
+                <p>
+                  <strong>{detail.latestRun.baseSelection.selectedResumeTitle}</strong>
+                  {detail.latestRun.baseSelection.lane ? ` · ${detail.latestRun.baseSelection.lane}` : ''}
+                </p>
+                <ul className="simple-list compact-list">
+                  {detail.latestRun.baseSelection.reasons.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
       {detail.latestRun ? (
         <section className="grid-two">
           <div className="panel">
@@ -180,8 +284,16 @@ export default async function TailoringDetailPage({ params }: { params: Promise<
                 <strong>{run.status}</strong>
                 <div className="muted small">
                   {new Date(run.createdAt).toLocaleString()}
+                  {run.generationMetadata?.executionMode ? ` · ${run.generationMetadata.executionMode}` : ''}
                   {run.revisionNote ? ` · ${run.revisionNote}` : ''}
+                  {run.sourceTailoringRunId ? ` · from ${run.sourceTailoringRunId}` : ''}
                 </div>
+                {run.failureCode ? (
+                  <div className="muted small">
+                    failure: {run.failureCode}
+                    {run.failureMessage ? ` — ${run.failureMessage}` : ''}
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>

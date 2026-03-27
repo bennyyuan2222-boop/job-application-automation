@@ -5,9 +5,11 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
+    "@job-ops/contracts": "*",
     "@job-ops/db": "*",
     "@job-ops/domain": "*",
     "@job-ops/tailoring": "*"

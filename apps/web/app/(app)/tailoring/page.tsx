@@ -42,7 +42,12 @@ export default async function TailoringPage() {
                     <div className="info-block">
                       <span className="eyebrow">Latest run</span>
                       <strong>{item.latestRun?.status ?? 'none yet'}</strong>
-                      {item.latestRun?.changeSummary?.[0] ? (
+                      {item.latestRun?.generationMetadata?.executionMode ? (
+                        <span className="muted small">{item.latestRun.generationMetadata.executionMode}</span>
+                      ) : null}
+                      {item.latestRun?.failureCode ? (
+                        <span className="muted small">{item.latestRun.failureCode}</span>
+                      ) : item.latestRun?.changeSummary?.[0] ? (
                         <span className="muted small">{item.latestRun.changeSummary[0]}</span>
                       ) : null}
                     </div>

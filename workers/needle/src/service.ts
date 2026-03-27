@@ -1,6 +1,7 @@
 import {
   ActorType,
   ApplicationStatus,
+  Prisma,
   ResumeCreatedByType,
   ResumeVersionKind,
   prisma,
@@ -27,6 +28,13 @@ import {
   type ResumeCandidate,
   type TailoredResumeDraft,
 } from '@job-ops/tailoring';
+
+import {
+  NeedleAgentError,
+  ensureNeedleApplicationSession,
+  requestTailoringFromNeedleAgent,
+  type NeedlePriorRunContext,
+} from './agent';
 
 function toRequirementList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
@@ -81,8 +89,11 @@ async function loadApplicationContext(applicationId: string) {
         },
       },
       tailoringRuns: {
+        include: {
+          outputResumeVersion: true,
+        },
         orderBy: { createdAt: 'desc' },
-        take: 1,
+        take: 5,
       },
     },
   });
@@ -101,6 +112,47 @@ async function loadBaseResumeCandidates(): Promise<ResumeCandidate[]> {
   });
 
   return baseResumes.map((resume) => toResumeCandidate(resume));
+}
+
+function resolveNeedleGenerationMode() {
+  const configured = process.env.NEEDLE_GENERATION_MODE?.trim().toLowerCase();
+  return configured === 'heuristic' ? 'heuristic' : 'agent';
+}
+
+function dedupeStrings(values: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = value.trim();
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function mapPriorRunsForNeedle(
+  application: Awaited<ReturnType<typeof loadApplicationContext>>,
+): NeedlePriorRunContext[] {
+  return application.tailoringRuns.map((run) => ({
+    id: run.id,
+    status: run.status,
+    createdAt: run.createdAt.toISOString(),
+    completedAt: run.completedAt ? run.completedAt.toISOString() : null,
+    sourceTailoringRunId: run.sourceTailoringRunId,
+    revisionNote: run.revisionNote,
+    instructions: run.instructions,
+    fitAssessment: (run.fitAssessmentJson as NeedlePriorRunContext['fitAssessment']) ?? null,
+    baseSelection: (run.baseSelectionJson as NeedlePriorRunContext['baseSelection']) ?? null,
+    rationale: Array.isArray(run.rationaleJson) ? (run.rationaleJson as string[]) : [],
+    changeSummary: Array.isArray(run.changeSummaryJson) ? (run.changeSummaryJson as string[]) : [],
+    risks: Array.isArray(run.risksJson) ? (run.risksJson as NeedlePriorRunContext['risks']) : [],
+    outputResumeVersionId: run.outputResumeVersionId,
+    outputResumeTitle: run.outputResumeVersion?.title ?? null,
+    outputResumeMarkdown: run.outputResumeVersion?.contentMarkdown ?? null,
+  }));
 }
 
 function buildBaseSelectionRecord(
@@ -162,7 +214,7 @@ function buildFitAssessment(jobContext: JobContext, draft: TailoredResumeDraft):
   };
 }
 
-function buildGenerationMetadata(
+function buildHeuristicGenerationMetadata(
   application: Awaited<ReturnType<typeof loadApplicationContext>>,
   latencyMs: number,
   sourceTailoringRunId?: string,
@@ -177,11 +229,53 @@ function buildGenerationMetadata(
   };
 }
 
+function buildAgentGenerationMetadata(args: {
+  strategyVersion: string;
+  promptVersion?: string | null;
+  modelId?: string | null;
+  provider?: string | null;
+  latencyMs: number;
+  sessionKey?: string | null;
+  sourceTailoringRunId?: string;
+}): TailoringGenerationMetadata {
+  return {
+    strategyVersion: args.strategyVersion,
+    ...(args.promptVersion ? { promptVersion: args.promptVersion } : {}),
+    ...(args.modelId ? { modelId: args.modelId } : {}),
+    ...(args.provider ? { provider: args.provider } : {}),
+    executionMode: 'agent',
+    latencyMs: args.latencyMs,
+    ...(args.sessionKey ? { sessionKey: args.sessionKey } : {}),
+    ...(args.sourceTailoringRunId ? { sourceTailoringRunId: args.sourceTailoringRunId } : {}),
+  };
+}
+
+function describeGenerationFailure(error: unknown, generationMode: 'agent' | 'heuristic') {
+  if (generationMode === 'agent' && error instanceof NeedleAgentError) {
+    return {
+      failureCode: error.code,
+      failureMessage: error.message,
+      failureDetails: error.details ?? null,
+    };
+  }
+
+  return {
+    failureCode: generationMode === 'agent' ? 'needle_agent_failed' : 'heuristic_generation_failed',
+    failureMessage: error instanceof Error ? error.message : String(error),
+    failureDetails: null,
+  };
+}
+
+function toJsonValue(value: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
 export async function generateTailoringDraftForApplication(
   applicationId: string,
   options?: { instructions?: string; actorLabel?: string; sourceTailoringRunId?: string },
 ) {
   const actorLabel = options?.actorLabel ?? 'needle';
+  const generationMode = resolveNeedleGenerationMode();
   const startedAt = Date.now();
   const application = await loadApplicationContext(applicationId);
   const candidates = await loadBaseResumeCandidates();
@@ -190,10 +284,10 @@ export async function generateTailoringDraftForApplication(
   }
 
   const jobContext = buildJobContext(application);
-  const selection = chooseBestBaseResume(jobContext, candidates);
-  const selectedBase = candidates.find((candidate) => candidate.id === selection.resumeVersionId);
-  if (!selectedBase) {
-    throw new Error(`Selected base resume not found: ${selection.resumeVersionId}`);
+  const heuristicSelection = chooseBestBaseResume(jobContext, candidates);
+  const heuristicBase = candidates.find((candidate) => candidate.id === heuristicSelection.resumeVersionId);
+  if (!heuristicBase) {
+    throw new Error(`Selected base resume not found: ${heuristicSelection.resumeVersionId}`);
   }
 
   const shouldMoveToReview = application.status !== ApplicationStatus.tailoring_review;
@@ -204,31 +298,151 @@ export async function generateTailoringDraftForApplication(
   const run = await prisma.tailoringRun.create({
     data: {
       applicationId: application.id,
-      inputResumeVersionId: selectedBase.id,
+      inputResumeVersionId: heuristicBase.id,
       sourceTailoringRunId: options?.sourceTailoringRunId ?? null,
       status: 'generating',
       instructions: options?.instructions ?? null,
       jobSnapshotJson: jobContext,
-      baseSelectionJson: buildBaseSelectionRecord(selection, selectedBase, candidates.length),
-      generationMetadataJson: buildGenerationMetadata(application, 0, options?.sourceTailoringRunId),
+      baseSelectionJson: buildBaseSelectionRecord(heuristicSelection, heuristicBase, candidates.length),
+      generationMetadataJson:
+        generationMode === 'agent'
+          ? buildAgentGenerationMetadata({
+              strategyVersion: 'needle-agent-phase2',
+              provider: 'openclaw',
+              latencyMs: 0,
+              sessionKey: application.needleSessionKey,
+              sourceTailoringRunId: options?.sourceTailoringRunId,
+            })
+          : buildHeuristicGenerationMetadata(application, 0, options?.sourceTailoringRunId),
     },
   });
 
-  try {
-    const draft = buildTailoredResumeDraft(jobContext, selectedBase);
-    draft.contentMarkdown = renderResumeDocument(draft.title, draft.document);
+  let sessionKeyForUpdate: string | null = application.needleSessionKey ?? null;
 
-    const fitAssessment = buildFitAssessment(jobContext, draft);
-    const generationMetadata = buildGenerationMetadata(application, Date.now() - startedAt, options?.sourceTailoringRunId);
+  try {
+    let selectedBase = heuristicBase;
+    let baseSelectionRecord = buildBaseSelectionRecord(heuristicSelection, heuristicBase, candidates.length);
+    let fitAssessment: TailoringFitAssessment;
+    let rationale: string[];
+    let risks: TailoredResumeDraft['risks'];
+    let changeSummary: string[];
+    let generatedTitle: string;
+    let generatedMarkdown: string;
+    let generatedDocument: ReturnType<typeof coerceResumeDocument>;
+    let generationMetadata: TailoringGenerationMetadata;
+
+    if (generationMode === 'agent') {
+      const sessionKey = await ensureNeedleApplicationSession({
+        applicationId: application.id,
+        existingSessionKey: application.needleSessionKey,
+      });
+      sessionKeyForUpdate = sessionKey;
+
+      const agentResult = await requestTailoringFromNeedleAgent({
+        sessionKey,
+        applicationId: application.id,
+        applicationStatus: application.status,
+        job: jobContext,
+        instructions: options?.instructions,
+        sourceTailoringRunId: options?.sourceTailoringRunId ?? null,
+        priorRuns: mapPriorRunsForNeedle(application),
+        baseResumeCandidates: candidates,
+        heuristicHint: {
+          selectedResumeVersionId: heuristicBase.id,
+          selectedResumeTitle: heuristicBase.title,
+          reasons: heuristicSelection.reasons,
+          lane: heuristicSelection.lane ?? null,
+        },
+      });
+
+      const agentSelectedBase = candidates.find(
+        (candidate) => candidate.id === agentResult.response.baseSelection.selectedResumeVersionId,
+      );
+      if (!agentSelectedBase) {
+        throw new Error(`Needle selected unknown base resume: ${agentResult.response.baseSelection.selectedResumeVersionId}`);
+      }
+
+      selectedBase = agentSelectedBase;
+      baseSelectionRecord = {
+        selectedResumeVersionId: agentSelectedBase.id,
+        selectedResumeTitle:
+          agentResult.response.baseSelection.selectedResumeTitle.trim() || agentSelectedBase.title,
+        ...(agentResult.response.baseSelection.lane
+          ? { lane: agentResult.response.baseSelection.lane }
+          : agentSelectedBase.document.meta?.lane
+            ? { lane: agentSelectedBase.document.meta.lane }
+            : {}),
+        ...(typeof agentResult.response.baseSelection.score === 'number'
+          ? { score: agentResult.response.baseSelection.score }
+          : {}),
+        reasons: agentResult.response.baseSelection.reasons,
+        candidateCount: candidates.length,
+      };
+      fitAssessment = agentResult.response.fitAssessment;
+      rationale = dedupeStrings([
+        ...agentResult.response.baseSelection.reasons,
+        ...agentResult.response.draft.rationale,
+      ]);
+      risks = agentResult.response.draft.risks;
+      changeSummary = agentResult.response.draft.changeSummary;
+      generatedTitle = agentResult.response.draft.title.trim() || `${jobContext.title} Resume`;
+      generatedMarkdown = agentResult.response.draft.contentMarkdown.trim();
+      if (!generatedMarkdown) {
+        throw new NeedleAgentError('needle_agent_empty_markdown', 'Needle returned an empty markdown draft', {
+          sessionKey,
+          applicationId: application.id,
+        });
+      }
+      generatedDocument = coerceResumeDocument(undefined, generatedMarkdown);
+      generationMetadata = buildAgentGenerationMetadata({
+        strategyVersion: agentResult.response.generation.strategyVersion,
+        promptVersion: agentResult.response.generation.promptVersion ?? undefined,
+        modelId: agentResult.response.generation.modelId ?? undefined,
+        provider: agentResult.response.generation.provider ?? 'openclaw',
+        latencyMs: Date.now() - startedAt,
+        sessionKey,
+        sourceTailoringRunId: options?.sourceTailoringRunId,
+      });
+    } else {
+      const draft = buildTailoredResumeDraft(jobContext, heuristicBase);
+      draft.contentMarkdown = renderResumeDocument(draft.title, draft.document);
+      fitAssessment = buildFitAssessment(jobContext, draft);
+      rationale = [...heuristicSelection.reasons, ...draft.rationale];
+      risks = draft.risks;
+      changeSummary = draft.changeSummary;
+      generatedTitle = draft.title;
+      generatedMarkdown = draft.contentMarkdown;
+      generatedDocument = draft.document;
+      generationMetadata = buildHeuristicGenerationMetadata(
+        application,
+        Date.now() - startedAt,
+        options?.sourceTailoringRunId,
+      );
+    }
+
+    const resultingApplicationStatus = shouldMoveToReview
+      ? ApplicationStatus.tailoring_review
+      : application.status;
 
     const result = await prisma.$transaction(async (tx) => {
       const beforeBaseResumeVersionId = application.baseResumeVersionId;
+      const applicationUpdateData: any = {};
       if (beforeBaseResumeVersionId !== selectedBase.id) {
+        applicationUpdateData.baseResumeVersionId = selectedBase.id;
+      }
+      if (generationMode === 'agent' && sessionKeyForUpdate) {
+        applicationUpdateData.needleSessionKey = sessionKeyForUpdate;
+        applicationUpdateData.needleSessionUpdatedAt = new Date();
+      }
+      if (shouldMoveToReview) {
+        applicationUpdateData.status = ApplicationStatus.tailoring_review;
+        applicationUpdateData.pausedReason = null;
+      }
+
+      if (Object.keys(applicationUpdateData).length > 0) {
         await tx.application.update({
           where: { id: application.id },
-          data: {
-            baseResumeVersionId: selectedBase.id,
-          },
+          data: applicationUpdateData,
         });
       }
 
@@ -236,10 +450,10 @@ export async function generateTailoringDraftForApplication(
         data: {
           kind: ResumeVersionKind.tailored,
           parentResumeVersionId: selectedBase.id,
-          title: draft.title,
-          contentMarkdown: draft.contentMarkdown,
-          sectionsJson: draft.document,
-          changeSummaryJson: draft.changeSummary,
+          title: generatedTitle,
+          contentMarkdown: generatedMarkdown,
+          sectionsJson: generatedDocument,
+          changeSummaryJson: changeSummary,
           createdByType: ResumeCreatedByType.agent,
         },
       });
@@ -247,29 +461,20 @@ export async function generateTailoringDraftForApplication(
       const updatedRun = await tx.tailoringRun.update({
         where: { id: run.id },
         data: {
+          inputResumeVersionId: selectedBase.id,
           outputResumeVersionId: tailoredResumeVersion.id,
           status: 'generated_for_review',
           fitAssessmentJson: fitAssessment,
-          baseSelectionJson: buildBaseSelectionRecord(selection, selectedBase, candidates.length),
-          rationaleJson: [...selection.reasons, ...draft.rationale],
-          risksJson: draft.risks,
-          changeSummaryJson: draft.changeSummary,
+          baseSelectionJson: baseSelectionRecord,
+          rationaleJson: rationale,
+          risksJson: risks,
+          changeSummaryJson: changeSummary,
           generationMetadataJson: generationMetadata,
           failureCode: null,
           failureMessage: null,
           completedAt: new Date(),
         },
       });
-
-      const applicationUpdate = shouldMoveToReview
-        ? await tx.application.update({
-            where: { id: application.id },
-            data: {
-              status: ApplicationStatus.tailoring_review,
-              pausedReason: null,
-            },
-          })
-        : application;
 
       const auditEvents = [];
       if (beforeBaseResumeVersionId !== selectedBase.id) {
@@ -283,8 +488,9 @@ export async function generateTailoringDraftForApplication(
             beforeState: { baseResumeVersionId: beforeBaseResumeVersionId },
             afterState: { baseResumeVersionId: selectedBase.id },
             payloadJson: {
-              reasons: selection.reasons,
-              lane: selection.lane ?? null,
+              reasons: baseSelectionRecord.reasons,
+              lane: 'lane' in baseSelectionRecord ? baseSelectionRecord.lane ?? null : null,
+              mode: generationMode,
             },
           }),
         );
@@ -304,9 +510,11 @@ export async function generateTailoringDraftForApplication(
             inputResumeVersionId: selectedBase.id,
             outputResumeVersionId: tailoredResumeVersion.id,
             fitAssessment,
-            baseSelection: buildBaseSelectionRecord(selection, selectedBase, candidates.length),
-            changeSummary: draft.changeSummary,
-            risks: draft.risks,
+            baseSelection: baseSelectionRecord,
+            changeSummary,
+            risks,
+            generationMetadata,
+            mode: generationMode,
           },
         }),
       );
@@ -320,7 +528,7 @@ export async function generateTailoringDraftForApplication(
             actorType: ActorType.agent,
             actorLabel,
             beforeState: { status: application.status },
-            afterState: { status: applicationUpdate.status },
+            afterState: { status: resultingApplicationStatus },
             payloadJson: {
               tailoringRunId: updatedRun.id,
             },
@@ -340,21 +548,43 @@ export async function generateTailoringDraftForApplication(
 
     return result;
   } catch (error) {
-    const failureMessage = error instanceof Error ? error.message : String(error);
-    const failureDetails = {
-      stage: 'heuristic_generation',
+    const failure = describeGenerationFailure(error, generationMode);
+    const failureDetails = toJsonValue({
+      stage: generationMode === 'agent' ? 'needle_agent_generation' : 'heuristic_generation',
       actorLabel,
-    };
+      sessionKey: sessionKeyForUpdate,
+      mode: generationMode,
+      ...(failure.failureDetails ? { detail: failure.failureDetails } : {}),
+    });
 
     await prisma.$transaction(async (tx) => {
+      if (generationMode === 'agent' && sessionKeyForUpdate) {
+        await tx.application.update({
+          where: { id: application.id },
+          data: {
+            needleSessionKey: sessionKeyForUpdate,
+            needleSessionUpdatedAt: new Date(),
+          },
+        });
+      }
+
       await tx.tailoringRun.update({
         where: { id: run.id },
         data: {
           status: 'failed',
-          generationMetadataJson: buildGenerationMetadata(application, Date.now() - startedAt, options?.sourceTailoringRunId),
-          failureCode: 'heuristic_generation_failed',
-          failureMessage,
-          failureDetailsJson: failureDetails,
+          generationMetadataJson:
+            generationMode === 'agent'
+              ? buildAgentGenerationMetadata({
+                  strategyVersion: 'needle-agent-phase2',
+                  provider: 'openclaw',
+                  latencyMs: Date.now() - startedAt,
+                  sessionKey: sessionKeyForUpdate,
+                  sourceTailoringRunId: options?.sourceTailoringRunId,
+                })
+              : buildHeuristicGenerationMetadata(application, Date.now() - startedAt, options?.sourceTailoringRunId),
+          failureCode: failure.failureCode,
+          failureMessage: failure.failureMessage,
+          failureDetailsJson: failureDetails ?? Prisma.JsonNull,
           completedAt: new Date(),
         },
       });
@@ -370,8 +600,9 @@ export async function generateTailoringDraftForApplication(
           afterState: { status: 'failed' },
           payloadJson: {
             applicationId: application.id,
-            failureCode: 'heuristic_generation_failed',
-            failureMessage,
+            failureCode: failure.failureCode,
+            failureMessage: failure.failureMessage,
+            mode: generationMode,
           },
         }),
       });
