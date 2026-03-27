@@ -1,6 +1,9 @@
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { getTailoringDetail } from '../../../../lib/queries';
+
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 function ResumePreview({ title, content }: { title: string; content: string }) {
   return (
@@ -13,13 +16,41 @@ function ResumePreview({ title, content }: { title: string; content: string }) {
   );
 }
 
-export default async function TailoringDetailPage({ params }: { params: Promise<{ id: string }> }) {
+function humanizeStatus(value: string) {
+  return value.replaceAll('_', ' ');
+}
+
+function getSearchParamValue(value: string | string[] | undefined) {
+  if (Array.isArray(value)) {
+    return value[0] ?? '';
+  }
+  return value ?? '';
+}
+
+export default async function TailoringDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams?: SearchParams;
+}) {
   const { id } = await params;
+  const resolvedSearchParams = searchParams ? await searchParams : {};
+  const requestedRunId = getSearchParamValue(resolvedSearchParams.run).trim();
   const detail = await getTailoringDetail(id);
 
   if (!detail) {
     notFound();
   }
+
+  const reviewedRun = detail.runHistory.find((run) => run.id === requestedRunId) ?? detail.latestRun;
+  const isViewingLatest = reviewedRun?.id === detail.latestRun?.id;
+  const reviewDraftTitle = reviewedRun?.outputResumeTitle
+    ? `${isViewingLatest ? 'Latest draft' : 'Selected draft'} · ${reviewedRun.outputResumeTitle}`
+    : isViewingLatest
+      ? 'Latest draft'
+      : 'Selected draft';
+  const reviewDraftContent = reviewedRun?.outputResumeMarkdown ?? 'No draft generated for this run.';
 
   return (
     <div className="page-stack">
@@ -35,10 +66,13 @@ export default async function TailoringDetailPage({ params }: { params: Promise<
             <strong>{detail.applicationStatus}</strong>
           </div>
           <div className="metric-card">
-            <span>Latest run</span>
-            <strong>{detail.latestRun?.status ?? 'none'}</strong>
-            {detail.latestRun?.generationMetadata?.executionMode ? (
-              <span className="muted small">{detail.latestRun.generationMetadata.executionMode}</span>
+            <span>{isViewingLatest ? 'Latest run' : 'Reviewing run'}</span>
+            <strong>{reviewedRun?.status ?? 'none'}</strong>
+            {reviewedRun?.generationMetadata?.executionMode ? (
+              <span className="muted small">{reviewedRun.generationMetadata.executionMode}</span>
+            ) : null}
+            {!isViewingLatest && detail.latestRun ? (
+              <span className="muted small">latest is {detail.latestRun.status}</span>
             ) : null}
           </div>
           <div className="metric-card">
@@ -47,10 +81,18 @@ export default async function TailoringDetailPage({ params }: { params: Promise<
           </div>
         </div>
         {detail.pausedReason ? <p className="error-banner">Paused: {detail.pausedReason}</p> : null}
-        {detail.latestRun?.failureCode ? (
+        {!isViewingLatest && detail.latestRun ? (
+          <p className="muted">
+            Viewing historical run.{' '}
+            <Link href={`/tailoring/${detail.applicationId}`} className="button-link secondary">
+              Jump back to latest draft
+            </Link>
+          </p>
+        ) : null}
+        {reviewedRun?.failureCode ? (
           <p className="error-banner">
-            Latest run failed: <strong>{detail.latestRun.failureCode}</strong>
-            {detail.latestRun.failureMessage ? ` — ${detail.latestRun.failureMessage}` : ''}
+            This run failed: <strong>{reviewedRun.failureCode}</strong>
+            {reviewedRun.failureMessage ? ` — ${reviewedRun.failureMessage}` : ''}
           </p>
         ) : null}
       </section>
@@ -102,9 +144,9 @@ export default async function TailoringDetailPage({ params }: { params: Promise<
 
             <form method="get" action="/api/actions/tailoring/request-edits" className="stack-form">
               <input type="hidden" name="applicationId" value={detail.applicationId} />
-              <input type="hidden" name="tailoringRunId" value={detail.latestRun?.id ?? ''} />
+              <input type="hidden" name="tailoringRunId" value={reviewedRun?.id ?? ''} />
               <label className="stack-field">
-                <span>Request edits</span>
+                <span>Request edits from this run</span>
                 <textarea
                   name="revisionNote"
                   rows={3}
@@ -112,17 +154,20 @@ export default async function TailoringDetailPage({ params }: { params: Promise<
                   placeholder="Ask Needle to tighten or change emphasis without inventing claims."
                 />
               </label>
-              <button type="submit" disabled={!detail.latestRun}>
+              <button type="submit" disabled={!reviewedRun}>
                 Request edits + regenerate
               </button>
+              <p className="muted small">
+                Revisions branch from the run you are reviewing and continue inside the same application-scoped Needle session.
+              </p>
             </form>
 
             <div className="button-row">
               <form method="get" action="/api/actions/tailoring/approve">
                 <input type="hidden" name="applicationId" value={detail.applicationId} />
-                <input type="hidden" name="tailoringRunId" value={detail.latestRun?.id ?? ''} />
-                <button type="submit" disabled={!detail.latestRun}>
-                  Approve latest draft
+                <input type="hidden" name="tailoringRunId" value={reviewedRun?.id ?? ''} />
+                <button type="submit" disabled={!reviewedRun?.outputResumeVersionId}>
+                  Approve this draft
                 </button>
               </form>
               <form method="get" action="/api/actions/tailoring/pause" className="inline-form">
@@ -137,26 +182,26 @@ export default async function TailoringDetailPage({ params }: { params: Promise<
         </div>
       </section>
 
-      {detail.latestRun &&
-      (detail.latestRun.fitAssessment ||
-        detail.latestRun.generationMetadata ||
-        detail.latestRun.baseSelection ||
-        detail.latestRun.failureCode) ? (
+      {reviewedRun &&
+      (reviewedRun.fitAssessment ||
+        reviewedRun.generationMetadata ||
+        reviewedRun.baseSelection ||
+        reviewedRun.failureCode) ? (
         <section className="grid-two">
           <div className="panel">
             <p className="eyebrow">Fit assessment</p>
-            {detail.latestRun.fitAssessment ? (
+            {reviewedRun.fitAssessment ? (
               <>
                 <h2>
-                  {detail.latestRun.fitAssessment.verdict.replaceAll('_', ' ')} ·{' '}
-                  {detail.latestRun.fitAssessment.proceedRecommendation.replaceAll('_', ' ')}
+                  {humanizeStatus(reviewedRun.fitAssessment.verdict)} ·{' '}
+                  {humanizeStatus(reviewedRun.fitAssessment.proceedRecommendation)}
                 </h2>
-                <p className="long-copy">{detail.latestRun.fitAssessment.summary}</p>
+                <p className="long-copy">{reviewedRun.fitAssessment.summary}</p>
                 <div className="grid-two compact-grid">
                   <div>
                     <h3>Matched strengths</h3>
                     <ul className="simple-list compact-list">
-                      {detail.latestRun.fitAssessment.matchedStrengths.map((item) => (
+                      {reviewedRun.fitAssessment.matchedStrengths.map((item) => (
                         <li key={item}>{item}</li>
                       ))}
                     </ul>
@@ -164,17 +209,17 @@ export default async function TailoringDetailPage({ params }: { params: Promise<
                   <div>
                     <h3>Likely gaps</h3>
                     <ul className="simple-list compact-list">
-                      {detail.latestRun.fitAssessment.likelyGaps.map((item) => (
+                      {reviewedRun.fitAssessment.likelyGaps.map((item) => (
                         <li key={item}>{item}</li>
                       ))}
                     </ul>
                   </div>
                 </div>
-                {detail.latestRun.fitAssessment.riskNotes.length ? (
+                {reviewedRun.fitAssessment.riskNotes.length ? (
                   <div>
                     <h3>Risk notes</h3>
                     <ul className="simple-list compact-list">
-                      {detail.latestRun.fitAssessment.riskNotes.map((item) => (
+                      {reviewedRun.fitAssessment.riskNotes.map((item) => (
                         <li key={item}>{item}</li>
                       ))}
                     </ul>
@@ -182,47 +227,46 @@ export default async function TailoringDetailPage({ params }: { params: Promise<
                 ) : null}
               </>
             ) : (
-              <p className="muted">No fit assessment is available for the latest run.</p>
+              <p className="muted">No fit assessment is available for this run.</p>
             )}
           </div>
           <div className="panel">
             <p className="eyebrow">Generation metadata</p>
             <ul className="simple-list compact-list">
               <li>
-                <strong>Execution mode</strong> — {detail.latestRun.generationMetadata?.executionMode ?? 'unknown'}
+                <strong>Execution mode</strong> — {reviewedRun.generationMetadata?.executionMode ?? 'unknown'}
               </li>
               <li>
-                <strong>Strategy</strong> — {detail.latestRun.generationMetadata?.strategyVersion ?? 'unknown'}
+                <strong>Strategy</strong> — {reviewedRun.generationMetadata?.strategyVersion ?? 'unknown'}
               </li>
               <li>
-                <strong>Provider</strong> — {detail.latestRun.generationMetadata?.provider ?? 'unknown'}
+                <strong>Provider</strong> — {reviewedRun.generationMetadata?.provider ?? 'unknown'}
               </li>
               <li>
-                <strong>Model</strong> — {detail.latestRun.generationMetadata?.modelId ?? 'n/a'}
+                <strong>Model</strong> — {reviewedRun.generationMetadata?.modelId ?? 'n/a'}
               </li>
               <li>
-                <strong>Latency</strong> —
-                {' '}
-                {typeof detail.latestRun.generationMetadata?.latencyMs === 'number'
-                  ? `${detail.latestRun.generationMetadata.latencyMs} ms`
+                <strong>Latency</strong> —{' '}
+                {typeof reviewedRun.generationMetadata?.latencyMs === 'number'
+                  ? `${reviewedRun.generationMetadata.latencyMs} ms`
                   : 'n/a'}
               </li>
               <li>
-                <strong>Session key</strong> — {detail.latestRun.generationMetadata?.sessionKey ?? 'n/a'}
+                <strong>Session key</strong> — {reviewedRun.generationMetadata?.sessionKey ?? 'n/a'}
               </li>
               <li>
-                <strong>Source run</strong> — {detail.latestRun.sourceTailoringRunId ?? 'n/a'}
+                <strong>Source run</strong> — {reviewedRun.sourceTailoringRunId ?? 'n/a'}
               </li>
             </ul>
-            {detail.latestRun.baseSelection ? (
+            {reviewedRun.baseSelection ? (
               <>
                 <h3>Base selection</h3>
                 <p>
-                  <strong>{detail.latestRun.baseSelection.selectedResumeTitle}</strong>
-                  {detail.latestRun.baseSelection.lane ? ` · ${detail.latestRun.baseSelection.lane}` : ''}
+                  <strong>{reviewedRun.baseSelection.selectedResumeTitle}</strong>
+                  {reviewedRun.baseSelection.lane ? ` · ${reviewedRun.baseSelection.lane}` : ''}
                 </p>
                 <ul className="simple-list compact-list">
-                  {detail.latestRun.baseSelection.reasons.map((item) => (
+                  {reviewedRun.baseSelection.reasons.map((item) => (
                     <li key={item}>{item}</li>
                   ))}
                 </ul>
@@ -232,32 +276,36 @@ export default async function TailoringDetailPage({ params }: { params: Promise<
         </section>
       ) : null}
 
-      {detail.latestRun ? (
+      {reviewedRun ? (
         <section className="grid-two">
           <div className="panel">
             <p className="eyebrow">Rationale</p>
             <ul className="simple-list compact-list">
-              {detail.latestRun.rationale.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
+              {reviewedRun.rationale.length > 0 ? (
+                reviewedRun.rationale.map((item) => <li key={item}>{item}</li>)
+              ) : (
+                <li className="muted">No rationale captured for this run.</li>
+              )}
             </ul>
           </div>
           <div className="panel">
             <p className="eyebrow">Change summary</p>
             <ul className="simple-list compact-list">
-              {detail.latestRun.changeSummary.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
+              {reviewedRun.changeSummary.length > 0 ? (
+                reviewedRun.changeSummary.map((item) => <li key={item}>{item}</li>)
+              ) : (
+                <li className="muted">No change summary captured for this run.</li>
+              )}
             </ul>
           </div>
         </section>
       ) : null}
 
-      {detail.latestRun?.risks.length ? (
+      {reviewedRun?.risks.length ? (
         <section className="panel">
           <p className="eyebrow">Truth/risk review</p>
           <ul className="simple-list compact-list">
-            {detail.latestRun.risks.map((risk) => (
+            {reviewedRun.risks.map((risk) => (
               <li key={`${risk.requirement}-${risk.severity}`}>
                 <strong>{risk.requirement}</strong> — {risk.reason}{' '}
                 <span className="muted">({risk.severity})</span>
@@ -269,33 +317,50 @@ export default async function TailoringDetailPage({ params }: { params: Promise<
 
       <section className="grid-two preview-grid">
         <ResumePreview title={`Base resume · ${detail.baseResume.title}`} content={detail.baseResume.contentMarkdown} />
-        <ResumePreview
-          title={detail.latestDraft ? `Latest draft · ${detail.latestDraft.title}` : 'Latest draft'}
-          content={detail.latestDraft?.contentMarkdown ?? 'No draft generated yet.'}
-        />
+        <ResumePreview title={reviewDraftTitle} content={reviewDraftContent} />
       </section>
 
       <section className="grid-two">
         <div className="panel">
           <p className="eyebrow">Run history</p>
           <ul className="simple-list compact-list">
-            {detail.runHistory.map((run) => (
-              <li key={run.id}>
-                <strong>{run.status}</strong>
-                <div className="muted small">
-                  {new Date(run.createdAt).toLocaleString()}
-                  {run.generationMetadata?.executionMode ? ` · ${run.generationMetadata.executionMode}` : ''}
-                  {run.revisionNote ? ` · ${run.revisionNote}` : ''}
-                  {run.sourceTailoringRunId ? ` · from ${run.sourceTailoringRunId}` : ''}
-                </div>
-                {run.failureCode ? (
-                  <div className="muted small">
-                    failure: {run.failureCode}
-                    {run.failureMessage ? ` — ${run.failureMessage}` : ''}
+            {detail.runHistory.map((run) => {
+              const isSelected = run.id === reviewedRun?.id;
+              const runHref = run.id === detail.latestRun?.id ? `/tailoring/${detail.applicationId}` : `/tailoring/${detail.applicationId}?run=${run.id}`;
+              return (
+                <li key={run.id}>
+                  <div className="button-row">
+                    <div>
+                      <strong>{run.status}</strong>
+                      <div className="muted small">
+                        {new Date(run.createdAt).toLocaleString()}
+                        {run.generationMetadata?.executionMode ? ` · ${run.generationMetadata.executionMode}` : ''}
+                        {run.sourceTailoringRunId ? ` · from ${run.sourceTailoringRunId}` : ''}
+                        {run.revisionNote ? ` · revision requested` : ''}
+                      </div>
+                    </div>
+                    <div className="button-row">
+                      {run.id === detail.latestRun?.id ? <span className="muted small">latest</span> : null}
+                      {isSelected ? (
+                        <span className="muted small">viewing</span>
+                      ) : (
+                        <Link href={runHref} className="button-link secondary">
+                          Review this run
+                        </Link>
+                      )}
+                    </div>
                   </div>
-                ) : null}
-              </li>
-            ))}
+                  {run.revisionNote ? <div className="muted small">Revision note: {run.revisionNote}</div> : null}
+                  {run.changeSummary[0] ? <div className="muted small">{run.changeSummary[0]}</div> : null}
+                  {run.failureCode ? (
+                    <div className="muted small">
+                      failure: {run.failureCode}
+                      {run.failureMessage ? ` — ${run.failureMessage}` : ''}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         </div>
         <div className="panel">

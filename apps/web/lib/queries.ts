@@ -10,6 +10,7 @@ import {
   tailoringGenerationMetadataSchema,
   tailoringQueueItemSchema,
   tailoringRunSummarySchema,
+  tailoringRunWorkspaceItemSchema,
   type ApplicationDetail,
   type ApplyingQueueItem,
   type AuditEventItem,
@@ -157,6 +158,33 @@ function mapTailoringRunSummary(run: {
     failureCode: run.failureCode,
     failureMessage: run.failureMessage,
     outputResumeVersionId: run.outputResumeVersionId,
+  });
+}
+
+function mapTailoringRunWorkspaceItem(run: {
+  id: string;
+  status: string;
+  createdAt: Date;
+  completedAt: Date | null;
+  instructions: string | null;
+  revisionNote: string | null;
+  sourceTailoringRunId: string | null;
+  fitAssessmentJson: unknown;
+  baseSelectionJson: unknown;
+  rationaleJson: unknown;
+  changeSummaryJson: unknown;
+  risksJson: unknown;
+  generationMetadataJson: unknown;
+  failureCode: string | null;
+  failureMessage: string | null;
+  outputResumeVersionId: string | null;
+  outputResumeVersion?: { title: string; contentMarkdown: string } | null;
+}) {
+  const summary = mapTailoringRunSummary(run);
+  return tailoringRunWorkspaceItemSchema.parse({
+    ...summary,
+    outputResumeTitle: run.outputResumeVersion?.title ?? null,
+    outputResumeMarkdown: run.outputResumeVersion?.contentMarkdown ?? null,
   });
 }
 
@@ -486,8 +514,8 @@ export async function getTailoringDetail(applicationId: string): Promise<Tailori
         }
       : null,
     latestDraft,
-    latestRun: latestRun ? mapTailoringRunSummary(latestRun) : null,
-    runHistory: application.tailoringRuns.map((run) => mapTailoringRunSummary(run)),
+    latestRun: latestRun ? mapTailoringRunWorkspaceItem(latestRun) : null,
+    runHistory: application.tailoringRuns.map((run) => mapTailoringRunWorkspaceItem(run)),
     auditEvents: auditEvents.map((event) =>
       auditEventItemSchema.parse({
         id: event.id,

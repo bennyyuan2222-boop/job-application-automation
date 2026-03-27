@@ -178,6 +178,11 @@ export const tailoringRunSummarySchema = z.object({
   outputResumeVersionId: z.string().nullable(),
 });
 
+export const tailoringRunWorkspaceItemSchema = tailoringRunSummarySchema.extend({
+  outputResumeTitle: z.string().nullable(),
+  outputResumeMarkdown: z.string().nullable(),
+});
+
 export const readinessIssueSchema = z.object({
   code: z.string(),
   level: z.string(),
@@ -360,8 +365,8 @@ export const tailoringDetailSchema = z.object({
   baseResume: resumeVersionDetailSchema,
   selectedTailoredResume: resumeVersionSummarySchema.nullable(),
   latestDraft: resumeVersionDetailSchema.nullable(),
-  latestRun: tailoringRunSummarySchema.nullable(),
-  runHistory: z.array(tailoringRunSummarySchema),
+  latestRun: tailoringRunWorkspaceItemSchema.nullable(),
+  runHistory: z.array(tailoringRunWorkspaceItemSchema),
   auditEvents: z.array(auditEventItemSchema),
 });
 
@@ -381,6 +386,7 @@ export type TailoringGenerationMetadata = z.infer<typeof tailoringGenerationMeta
 export type NeedleAgentDraft = z.infer<typeof needleAgentDraftSchema>;
 export type NeedleAgentResponse = z.infer<typeof needleAgentResponseSchema>;
 export type TailoringRunSummary = z.infer<typeof tailoringRunSummarySchema>;
+export type TailoringRunWorkspaceItem = z.infer<typeof tailoringRunWorkspaceItemSchema>;
 export type ReadinessIssue = z.infer<typeof readinessIssueSchema>;
 export type ReadinessSummary = z.infer<typeof readinessSummarySchema>;
 export type ApplicationAnswerItem = z.infer<typeof applicationAnswerItemSchema>;
