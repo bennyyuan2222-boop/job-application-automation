@@ -1,5 +1,5 @@
 import { revalidatePath } from 'next/cache';
-import { requestTailoringEditsForApplication } from '@job-ops/needle-worker';
+import { enqueueTailoringRevisionRequest } from '@job-ops/needle-worker';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { requireRouteSession } from '../../../../../lib/route-auth';
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(sameOriginUrl(request, '/tailoring'));
   }
 
-  await requestTailoringEditsForApplication(applicationId, tailoringRunId, revisionNote, {
+  await enqueueTailoringRevisionRequest(applicationId, tailoringRunId, revisionNote, {
     actorLabel: session.email,
   });
 

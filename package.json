@@ -22,6 +22,8 @@
     "db:generate": "npx prisma generate --schema packages/db/prisma/schema.prisma",
     "db:migrate:dev": "dotenv -e .env -- npx prisma migrate dev --schema packages/db/prisma/schema.prisma",
     "db:migrate:deploy": "npx prisma migrate deploy --schema packages/db/prisma/schema.prisma",
+    "needle:queue:once": "npm run --workspace @job-ops/needle-worker queue:once",
+    "needle:queue:watch": "npm run --workspace @job-ops/needle-worker queue:watch",
     "db:seed": "npm run -w @job-ops/db seed",
     "db:seed:local": "dotenv -e .env -- npm run db:seed",
     "scout:seed": "tsx scripts/scout-seed.ts",

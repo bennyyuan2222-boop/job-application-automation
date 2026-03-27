@@ -3,10 +3,12 @@
 import { revalidatePath } from 'next/cache';
 
 import {
+  enqueueTailoringDraftGeneration,
+  enqueueTailoringRevisionRequest,
+} from '@job-ops/needle-worker';
+import {
   approveTailoringRunForApplication,
-  generateTailoringDraftForApplication,
   pauseTailoringForApplication,
-  requestTailoringEditsForApplication,
 } from '../../../../../workers/needle/src/service';
 
 import { requireSession } from '../../../lib/auth';
@@ -31,7 +33,7 @@ export async function generateDraftAction(formData: FormData) {
   const applicationId = requiredValue(formData, 'applicationId');
   const instructions = String(formData.get('instructions') ?? '').trim();
 
-  await generateTailoringDraftForApplication(applicationId, {
+  await enqueueTailoringDraftGeneration(applicationId, {
     instructions: instructions || undefined,
     actorLabel: session.email,
   });
@@ -57,7 +59,7 @@ export async function requestEditsAction(formData: FormData) {
   const tailoringRunId = requiredValue(formData, 'tailoringRunId');
   const revisionNote = requiredValue(formData, 'revisionNote');
 
-  await requestTailoringEditsForApplication(applicationId, tailoringRunId, revisionNote, {
+  await enqueueTailoringRevisionRequest(applicationId, tailoringRunId, revisionNote, {
     actorLabel: session.email,
   });
 

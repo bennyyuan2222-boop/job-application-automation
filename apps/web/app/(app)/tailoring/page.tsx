@@ -1,13 +1,16 @@
 import Link from 'next/link';
 
+import { AutoRefresh } from '../../../components/auto-refresh';
 import { getTailoringQueue } from '../../../lib/queries';
 import { generateDraftAction } from './actions';
 
 export default async function TailoringPage() {
   const queue = await getTailoringQueue();
+  const hasActiveTask = queue.some((item) => Boolean(item.activeTask));
 
   return (
     <div className="page-stack">
+      <AutoRefresh enabled={hasActiveTask} intervalMs={5000} />
       <section className="panel">
         <p className="eyebrow">Tailoring</p>
         <h1>Needle review queue</h1>
@@ -40,12 +43,30 @@ export default async function TailoringPage() {
                       <strong>{item.baseResume.title}</strong>
                     </div>
                     <div className="info-block">
-                      <span className="eyebrow">Latest run</span>
-                      <strong>{item.latestRun?.status ?? 'none yet'}</strong>
-                      {item.latestRun?.generationMetadata?.executionMode ? (
+                      <span className="eyebrow">Needle task</span>
+                      <strong>
+                        {item.activeTask
+                          ? item.activeTask.status
+                          : item.latestTask
+                            ? item.latestTask.status
+                            : item.latestRun?.status ?? 'none yet'}
+                      </strong>
+                      {item.activeTask ? (
+                        <span className="muted small">
+                          {item.activeTask.taskType} · requested by {item.activeTask.requestedByLabel}
+                        </span>
+                      ) : item.latestTask ? (
+                        <span className="muted small">
+                          {item.latestTask.taskType} · requested by {item.latestTask.requestedByLabel}
+                        </span>
+                      ) : item.latestRun?.generationMetadata?.executionMode ? (
                         <span className="muted small">{item.latestRun.generationMetadata.executionMode}</span>
                       ) : null}
-                      {item.latestRun?.failureCode ? (
+                      {item.activeTask?.failureCode ? (
+                        <span className="muted small">{item.activeTask.failureCode}</span>
+                      ) : item.latestTask?.failureCode ? (
+                        <span className="muted small">{item.latestTask.failureCode}</span>
+                      ) : item.latestRun?.failureCode ? (
                         <span className="muted small">{item.latestRun.failureCode}</span>
                       ) : item.latestRun?.changeSummary?.[0] ? (
                         <span className="muted small">{item.latestRun.changeSummary[0]}</span>
@@ -71,7 +92,9 @@ export default async function TailoringPage() {
                   </Link>
                   <form action={generateDraftAction}>
                     <input type="hidden" name="applicationId" value={item.applicationId} />
-                    <button type="submit">Generate fresh draft</button>
+                    <button type="submit" disabled={Boolean(item.activeTask)}>
+                      {item.activeTask ? 'Needle task in progress' : 'Generate fresh draft'}
+                    </button>
                   </form>
                 </div>
               </li>

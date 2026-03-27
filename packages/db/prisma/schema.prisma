@@ -53,6 +53,19 @@ enum TailoringRunStatus {
   failed
 }
 
+enum NeedleTaskType {
+  generate_draft
+  request_edits
+}
+
+enum NeedleTaskStatus {
+  queued
+  processing
+  completed
+  failed
+  cancelled
+}
+
 enum AnswerSourceType {
   manual
   agent
@@ -323,6 +336,7 @@ model Application {
   createdAt               DateTime                @default(now())
   updatedAt               DateTime                @updatedAt
   tailoringRuns           TailoringRun[]
+  needleTasks             NeedleTask[]
   answers                 ApplicationAnswer[]
   attachments             ApplicationAttachment[]
   portalSessions          PortalSession[]
@@ -356,10 +370,35 @@ model TailoringRun {
   revisionNote           String?
   createdAt              DateTime           @default(now())
   completedAt            DateTime?
+  resultNeedleTasks      NeedleTask[]       @relation("NeedleTaskResultRun")
 
   @@index([applicationId, createdAt])
   @@index([sourceTailoringRunId])
   @@index([status, createdAt])
+}
+
+model NeedleTask {
+  id                   String           @id @default(cuid())
+  applicationId        String
+  application          Application      @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  taskType             NeedleTaskType
+  status               NeedleTaskStatus @default(queued)
+  requestedByLabel     String
+  instructions         String?
+  sourceTailoringRunId String?
+  resultTailoringRunId String?
+  resultTailoringRun   TailoringRun?    @relation("NeedleTaskResultRun", fields: [resultTailoringRunId], references: [id])
+  failureCode          String?
+  failureMessage       String?
+  startedAt            DateTime?
+  completedAt          DateTime?
+  workerLabel          String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  @@index([applicationId, createdAt])
+  @@index([status, createdAt])
+  @@index([resultTailoringRunId])
 }
 
 model ApplicationAnswer {
@@ -425,18 +464,18 @@ model ScoutDecision {
 
 model PostingCheck {
   id             String             @id @default(cuid())
-  jobId           String
-  job             Job                @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  status          PostingCheckStatus
-  checkerType     ActorType          @default(agent)
-  checkerLabel    String
-  originalUrl     String?
-  finalUrl        String?
-  replacementUrl  String?
-  sourceBoard     String?
-  evidenceJson    Json?
-  notes           String?
-  createdAt       DateTime           @default(now())
+  jobId          String
+  job            Job                @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  status         PostingCheckStatus
+  checkerType    ActorType          @default(agent)
+  checkerLabel   String
+  originalUrl    String?
+  finalUrl       String?
+  replacementUrl String?
+  sourceBoard    String?
+  evidenceJson   Json?
+  notes          String?
+  createdAt      DateTime           @default(now())
 
   @@index([jobId, createdAt])
   @@index([status, createdAt])

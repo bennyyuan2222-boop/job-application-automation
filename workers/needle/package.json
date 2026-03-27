@@ -6,7 +6,9 @@
   "main": "src/index.ts",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test src/**/*.test.ts",
+    "queue:once": "tsx src/runner.ts once",
+    "queue:watch": "tsx src/runner.ts watch"
   },
   "dependencies": {
     "@job-ops/contracts": "*",

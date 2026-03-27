@@ -1,6 +1,6 @@
 import { ActorType, ApplicationStatus, prisma } from '@job-ops/db';
 import { makeAuditEvent } from '@job-ops/domain';
-import { generateTailoringDraftForApplication } from '@job-ops/needle-worker';
+import { enqueueTailoringDraftGeneration } from '@job-ops/needle-worker';
 
 import { chooseProvisionalBaseResumeForJob } from './tailoring-bootstrap';
 
@@ -62,7 +62,7 @@ export async function startApplicationForJob(args: {
     return createdApplication;
   });
 
-  await generateTailoringDraftForApplication(application.id, {
+  await enqueueTailoringDraftGeneration(application.id, {
     actorLabel: args.actorLabel,
     instructions: args.initialTailoringInstructions ?? 'Auto-generated after starting application from shortlist.',
   });

@@ -183,6 +183,22 @@ export const tailoringRunWorkspaceItemSchema = tailoringRunSummarySchema.extend(
   outputResumeMarkdown: z.string().nullable(),
 });
 
+export const needleTaskSummarySchema = z.object({
+  id: z.string(),
+  taskType: z.enum(['generate_draft', 'request_edits']),
+  status: z.enum(['queued', 'processing', 'completed', 'failed', 'cancelled']),
+  requestedByLabel: z.string(),
+  instructions: z.string().nullable(),
+  sourceTailoringRunId: z.string().nullable(),
+  resultTailoringRunId: z.string().nullable(),
+  failureCode: z.string().nullable(),
+  failureMessage: z.string().nullable(),
+  workerLabel: z.string().nullable(),
+  createdAt: z.string(),
+  startedAt: z.string().nullable(),
+  completedAt: z.string().nullable(),
+});
+
 export const readinessIssueSchema = z.object({
   code: z.string(),
   level: z.string(),
@@ -345,12 +361,16 @@ export const tailoringQueueItemSchema = z.object({
   baseResume: resumeVersionSummarySchema,
   selectedTailoredResume: resumeVersionSummarySchema.nullable(),
   latestRun: tailoringRunSummarySchema.nullable(),
+  activeTask: needleTaskSummarySchema.nullable(),
+  latestTask: needleTaskSummarySchema.nullable(),
 });
 
 export const tailoringDetailSchema = z.object({
   applicationId: z.string(),
   applicationStatus: z.string(),
   pausedReason: z.string().nullable(),
+  activeTask: needleTaskSummarySchema.nullable(),
+  latestTask: needleTaskSummarySchema.nullable(),
   job: z.object({
     id: z.string(),
     title: z.string(),
@@ -387,6 +407,7 @@ export type NeedleAgentDraft = z.infer<typeof needleAgentDraftSchema>;
 export type NeedleAgentResponse = z.infer<typeof needleAgentResponseSchema>;
 export type TailoringRunSummary = z.infer<typeof tailoringRunSummarySchema>;
 export type TailoringRunWorkspaceItem = z.infer<typeof tailoringRunWorkspaceItemSchema>;
+export type NeedleTaskSummary = z.infer<typeof needleTaskSummarySchema>;
 export type ReadinessIssue = z.infer<typeof readinessIssueSchema>;
 export type ReadinessSummary = z.infer<typeof readinessSummarySchema>;
 export type ApplicationAnswerItem = z.infer<typeof applicationAnswerItemSchema>;

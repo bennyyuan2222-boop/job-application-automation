@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
+import { AutoRefresh } from '../../../../components/auto-refresh';
 import { getTailoringDetail } from '../../../../lib/queries';
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -45,6 +46,7 @@ export default async function TailoringDetailPage({
 
   const reviewedRun = detail.runHistory.find((run) => run.id === requestedRunId) ?? detail.latestRun;
   const isViewingLatest = reviewedRun?.id === detail.latestRun?.id;
+  const hasActiveTask = Boolean(detail.activeTask);
   const reviewDraftTitle = reviewedRun?.outputResumeTitle
     ? `${isViewingLatest ? 'Latest draft' : 'Selected draft'} · ${reviewedRun.outputResumeTitle}`
     : isViewingLatest
@@ -54,6 +56,7 @@ export default async function TailoringDetailPage({
 
   return (
     <div className="page-stack">
+      <AutoRefresh enabled={hasActiveTask} intervalMs={5000} />
       <section className="panel">
         <p className="eyebrow">Tailoring workspace</p>
         <h1>
@@ -81,6 +84,19 @@ export default async function TailoringDetailPage({
           </div>
         </div>
         {detail.pausedReason ? <p className="error-banner">Paused: {detail.pausedReason}</p> : null}
+        {detail.activeTask ? (
+          <p className="error-banner">
+            Needle task {detail.activeTask.status}: <strong>{detail.activeTask.taskType}</strong>
+            {detail.activeTask.workerLabel ? ` · ${detail.activeTask.workerLabel}` : ''}
+            {detail.activeTask.instructions ? ` — ${detail.activeTask.instructions}` : ''}
+          </p>
+        ) : detail.latestTask?.status === 'failed' ? (
+          <p className="error-banner">
+            Latest Needle task failed: <strong>{detail.latestTask.taskType}</strong>
+            {detail.latestTask.failureCode ? ` · ${detail.latestTask.failureCode}` : ''}
+            {detail.latestTask.failureMessage ? ` — ${detail.latestTask.failureMessage}` : ''}
+          </p>
+        ) : null}
         {!isViewingLatest && detail.latestRun ? (
           <p className="muted">
             Viewing historical run.{' '}
@@ -139,7 +155,9 @@ export default async function TailoringDetailPage({
                   placeholder="Emphasize workflow mapping, stakeholder communication, or leave blank for default regeneration."
                 />
               </label>
-              <button type="submit">Generate fresh draft</button>
+              <button type="submit" disabled={hasActiveTask}>
+                {hasActiveTask ? 'Needle task in progress' : 'Generate fresh draft'}
+              </button>
             </form>
 
             <form method="get" action="/api/actions/tailoring/request-edits" className="stack-form">
@@ -154,8 +172,8 @@ export default async function TailoringDetailPage({
                   placeholder="Ask Needle to tighten or change emphasis without inventing claims."
                 />
               </label>
-              <button type="submit" disabled={!reviewedRun}>
-                Request edits + regenerate
+              <button type="submit" disabled={!reviewedRun || hasActiveTask}>
+                {hasActiveTask ? 'Needle task in progress' : 'Request edits + regenerate'}
               </button>
               <p className="muted small">
                 Revisions branch from the run you are reviewing and continue inside the same application-scoped Needle session.
@@ -166,8 +184,8 @@ export default async function TailoringDetailPage({
               <form method="get" action="/api/actions/tailoring/approve">
                 <input type="hidden" name="applicationId" value={detail.applicationId} />
                 <input type="hidden" name="tailoringRunId" value={reviewedRun?.id ?? ''} />
-                <button type="submit" disabled={!reviewedRun?.outputResumeVersionId}>
-                  Approve this draft
+                <button type="submit" disabled={!reviewedRun?.outputResumeVersionId || hasActiveTask}>
+                  {hasActiveTask ? 'Wait for active Needle task' : 'Approve this draft'}
                 </button>
               </form>
               <form method="get" action="/api/actions/tailoring/pause" className="inline-form">

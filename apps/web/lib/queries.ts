@@ -4,6 +4,7 @@ import {
   auditEventItemSchema,
   jobListItemSchema,
   resumeVersionDetailSchema,
+  needleTaskSummarySchema,
   tailoringBaseSelectionSchema,
   tailoringDetailSchema,
   tailoringFitAssessmentSchema,
@@ -185,6 +186,38 @@ function mapTailoringRunWorkspaceItem(run: {
     ...summary,
     outputResumeTitle: run.outputResumeVersion?.title ?? null,
     outputResumeMarkdown: run.outputResumeVersion?.contentMarkdown ?? null,
+  });
+}
+
+function mapNeedleTaskSummary(task: {
+  id: string;
+  taskType: string;
+  status: string;
+  requestedByLabel: string;
+  instructions: string | null;
+  sourceTailoringRunId: string | null;
+  resultTailoringRunId: string | null;
+  failureCode: string | null;
+  failureMessage: string | null;
+  workerLabel: string | null;
+  createdAt: Date;
+  startedAt: Date | null;
+  completedAt: Date | null;
+}) {
+  return needleTaskSummarySchema.parse({
+    id: task.id,
+    taskType: task.taskType,
+    status: task.status,
+    requestedByLabel: task.requestedByLabel,
+    instructions: task.instructions,
+    sourceTailoringRunId: task.sourceTailoringRunId,
+    resultTailoringRunId: task.resultTailoringRunId,
+    failureCode: task.failureCode,
+    failureMessage: task.failureMessage,
+    workerLabel: task.workerLabel,
+    createdAt: task.createdAt.toISOString(),
+    startedAt: task.startedAt ? task.startedAt.toISOString() : null,
+    completedAt: task.completedAt ? task.completedAt.toISOString() : null,
   });
 }
 
@@ -418,6 +451,10 @@ export async function getTailoringQueue(): Promise<TailoringQueueItem[]> {
         orderBy: { createdAt: 'desc' },
         take: 1,
       },
+      needleTasks: {
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+      },
     },
     orderBy: { updatedAt: 'desc' },
   });
@@ -448,6 +485,11 @@ export async function getTailoringQueue(): Promise<TailoringQueueItem[]> {
           }
         : null,
       latestRun: application.tailoringRuns[0] ? mapTailoringRunSummary(application.tailoringRuns[0]) : null,
+      activeTask: (() => {
+        const activeTask = application.needleTasks.find((task) => task.status === 'queued' || task.status === 'processing');
+        return activeTask ? mapNeedleTaskSummary(activeTask) : null;
+      })(),
+      latestTask: application.needleTasks[0] ? mapNeedleTaskSummary(application.needleTasks[0]) : null,
     }),
   );
 }
@@ -468,6 +510,10 @@ export async function getTailoringDetail(applicationId: string): Promise<Tailori
           outputResumeVersion: true,
         },
         orderBy: { createdAt: 'desc' },
+      },
+      needleTasks: {
+        orderBy: { createdAt: 'desc' },
+        take: 5,
       },
     },
   });
@@ -492,10 +538,15 @@ export async function getTailoringDetail(applicationId: string): Promise<Tailori
   const latestRun = application.tailoringRuns[0] ?? null;
   const latestDraft = latestRun?.outputResumeVersion ? mapResumeVersionDetail(latestRun.outputResumeVersion) : null;
 
+  const activeTask = application.needleTasks.find((task) => task.status === 'queued' || task.status === 'processing') ?? null;
+  const latestTask = application.needleTasks[0] ?? null;
+
   return tailoringDetailSchema.parse({
     applicationId: application.id,
     applicationStatus: application.status,
     pausedReason: application.pausedReason,
+    activeTask: activeTask ? mapNeedleTaskSummary(activeTask) : null,
+    latestTask: latestTask ? mapNeedleTaskSummary(latestTask) : null,
     job: {
       id: application.job.id,
       title: application.job.title,
