@@ -2,6 +2,14 @@ import Link from 'next/link';
 
 import { getShortlistedJobs } from '../../../lib/queries';
 
+function formatPostingStatus(value: string | null | undefined) {
+  if (!value) {
+    return 'not checked';
+  }
+
+  return value.replaceAll('_', ' ');
+}
+
 export default async function ShortlistPage() {
   const jobs = await getShortlistedJobs();
 
@@ -31,6 +39,7 @@ export default async function ShortlistPage() {
                 <div className="stack-blocks small muted">
                   <div>Priority: {job.priorityScore?.toFixed(1) ?? '—'}</div>
                   <div>Work mode: {job.workMode ?? 'unknown'}</div>
+                  <div>Posting: {formatPostingStatus(job.latestPostingCheck?.status)}</div>
                   {job.provenance ? <div>Source: {job.provenance.sourceKey}</div> : null}
                 </div>
 
@@ -40,6 +49,9 @@ export default async function ShortlistPage() {
                   <Link href={`/jobs/${job.id}`} className="button-link secondary">
                     Details
                   </Link>
+                  <form method="post" action={`/api/actions/jobs/${job.id}/verify-posting?next=/shortlist`}>
+                    <button type="submit" className="button-link secondary">Verify posting</button>
+                  </form>
                   {job.activeApplication ? (
                     <Link
                       href={job.activeApplication.status === 'applying' || job.activeApplication.status === 'submit_review' || job.activeApplication.status === 'submitted'
@@ -49,6 +61,8 @@ export default async function ShortlistPage() {
                     >
                       Open {job.activeApplication.status.replaceAll('_', ' ')}
                     </Link>
+                  ) : job.latestPostingCheck && (job.latestPostingCheck.status === 'dead' || job.latestPostingCheck.status === 'uncertain') ? (
+                    <span className="muted small">Re-verify before starting</span>
                   ) : (
                     <form method="get" action={`/api/actions/jobs/${job.id}/start`}>
                       <button type="submit">Start application</button>

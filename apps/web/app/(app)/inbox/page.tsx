@@ -11,6 +11,14 @@ function formatConfidence(value: number | null | undefined) {
   return `${Math.round(value * 100)}%`;
 }
 
+function formatPostingStatus(value: string | null | undefined) {
+  if (!value) {
+    return 'not checked';
+  }
+
+  return value.replaceAll('_', ' ');
+}
+
 export default async function InboxPage() {
   const jobs = await getInboxScoutJobs();
   const needsHumanReview = jobs.filter((job) => job.latestDecision?.verdict === 'needs_human_review');
@@ -63,6 +71,7 @@ function JobList({ jobs, emptyMessage }: { jobs: ScoutQueueJob[]; emptyMessage: 
               <div className="muted small" style={{ textAlign: 'right' }}>
                 <div>priority {job.priorityScore ?? 'n/a'}</div>
                 <div>status {job.status}</div>
+                <div>posting {formatPostingStatus(job.latestPostingCheck?.status)}</div>
               </div>
             </div>
 
@@ -108,6 +117,9 @@ function JobList({ jobs, emptyMessage }: { jobs: ScoutQueueJob[]; emptyMessage: 
               <Link href={`/jobs/${job.id}`} className="button-link secondary">
                 Details
               </Link>
+              <form method="post" action={`/api/actions/jobs/${job.id}/verify-posting?next=/inbox`}>
+                <button type="submit" className="button-link secondary">Verify posting</button>
+              </form>
               <form method="post" action={`/api/actions/jobs/${job.id}/shortlist?next=/inbox`}>
                 <button type="submit">Shortlist</button>
               </form>

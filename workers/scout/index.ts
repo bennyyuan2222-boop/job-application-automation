@@ -9,6 +9,7 @@ import {
 import { HEURISTIC_SCOUT_POLICY_VERSION, type ScoutDecisionDraft } from './decision';
 import { reviewJobsWithJobSearcherAgent, type JobSearcherReviewCandidate } from './job-searcher';
 import { loadScoutLearningSignal, type ScoutLearningSignal } from './learning';
+import { runPostingViabilityCheckForJob } from './posting-check';
 
 export const scoutRunTriggerTypes = ['scheduled', 'manual', 'backfill', 'test'] as const;
 export type ScoutRunTriggerType = (typeof scoutRunTriggerTypes)[number];
@@ -37,6 +38,8 @@ export type RunScoutIngestionResult = {
 type PendingScoutReview = JobSearcherReviewCandidate & {
   actorLabel: string;
 };
+
+type PostingCheckStatus = 'live' | 'probably_live' | 'uncertain' | 'dead';
 
 export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<RunScoutIngestionResult> {
   const triggerType = input.triggerType ?? 'manual';
@@ -84,8 +87,10 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
   let capturedCount = 0;
   let normalizedCount = 0;
   let erroredCount = 0;
+  let postingCheckErrorCount = 0;
   const errorSummaries: Array<Record<string, unknown>> = [];
   const pendingReviews: PendingScoutReview[] = [];
+  const postingCheckStatuses = new Map<string, PostingCheckStatus>();
 
   try {
     for (const [index, record] of input.records.entries()) {
@@ -319,7 +324,39 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
         throw new Error(`Missing Scout decision for job ${candidate.jobId}`);
       }
 
-      const shouldAutoApplyDecision = candidate.previousStatus === JobStatus.discovered && decision.actedAutomatically;
+      if (!shouldAutoRunPostingCheck(triggerType, candidate, decision)) {
+        continue;
+      }
+
+      try {
+        const { postingCheck } = await runPostingViabilityCheckForJob({
+          jobId: candidate.jobId,
+          actorType: ActorType.agent,
+          actorLabel: candidate.actorLabel,
+        });
+
+        postingCheckStatuses.set(candidate.jobId, postingCheck.status as PostingCheckStatus);
+      } catch (error) {
+        postingCheckErrorCount += 1;
+        errorSummaries.push({
+          stage: 'posting_check',
+          jobId: candidate.jobId,
+          message: getErrorMessage(error),
+        });
+      }
+    }
+
+    for (const candidate of pendingReviews) {
+      const decision = reviewedDecisions.get(candidate.jobId);
+      if (!decision) {
+        throw new Error(`Missing Scout decision for job ${candidate.jobId}`);
+      }
+
+      const latestPostingStatus = postingCheckStatuses.get(candidate.jobId) ?? null;
+      const shouldAutoApplyDecision =
+        candidate.previousStatus === JobStatus.discovered &&
+        decision.actedAutomatically &&
+        allowsAutomaticDecisionWithPostingStatus(decision.verdict, latestPostingStatus);
       const resultingStatus = shouldAutoApplyDecision ? decision.resultingStatus : candidate.previousStatus;
 
       await prisma.job.update({
@@ -340,7 +377,7 @@ export async function runScoutIngestion(input: RunScoutIngestionInput): Promise<
       });
     }
 
-    const finalStatus = erroredCount > 0 ? 'partial' : 'completed';
+    const finalStatus = erroredCount > 0 || postingCheckErrorCount > 0 ? 'partial' : 'completed';
 
     const run = await prisma.scrapeRun.update({
       where: { id: scrapeRun.id },
@@ -650,12 +687,22 @@ function resolveScoutReviewMode(triggerType: ScoutRunTriggerType) {
   return triggerType === 'test' ? 'heuristic' : 'job-searcher-agent';
 }
 
+function resolvePostingCheckMode(triggerType: ScoutRunTriggerType) {
+  const configured = process.env.SCOUT_POSTING_CHECK_MODE?.trim();
+  if (configured === 'disabled' || configured === 'job-searcher-agent') {
+    return configured;
+  }
+
+  return triggerType === 'test' ? 'disabled' : 'job-searcher-agent';
+}
+
 function buildScoutRunQueryJson(input: RunScoutIngestionInput, triggerType: ScoutRunTriggerType) {
   const base = {
     searchTerm: input.searchTerm ?? null,
     searchLocation: input.searchLocation ?? null,
     triggerType,
     reviewMode: resolveScoutReviewMode(triggerType),
+    postingCheckMode: resolvePostingCheckMode(triggerType),
     idempotencyKey: input.idempotencyKey ?? null,
     fetchedCount: input.fetchedCount ?? input.records.length,
     rejectedCount: input.rejectedCount ?? 0,
@@ -671,6 +718,29 @@ function buildScoutRunQueryJson(input: RunScoutIngestionInput, triggerType: Scou
   };
 }
 
+function shouldAutoRunPostingCheck(
+  triggerType: ScoutRunTriggerType,
+  candidate: PendingScoutReview,
+  decision: ScoutDecisionDraft,
+) {
+  if (resolvePostingCheckMode(triggerType) === 'disabled') {
+    return false;
+  }
+
+  return decision.verdict === 'shortlist' || candidate.previousStatus === JobStatus.shortlisted;
+}
+
+function allowsAutomaticDecisionWithPostingStatus(
+  verdict: ScoutDecisionDraft['verdict'],
+  postingStatus: PostingCheckStatus | null,
+) {
+  if (verdict !== 'shortlist') {
+    return true;
+  }
+
+  return postingStatus !== 'dead' && postingStatus !== 'uncertain';
+}
+
 function clamp(value: number) {
   return Math.max(0, Math.min(0.99, Number(value.toFixed(2))));
 }
@@ -682,3 +752,12 @@ function getErrorMessage(error: unknown) {
 
   return String(error);
 }
+
+export {
+  backfillPostingViabilityChecksForShortlistedJobs,
+  runPostingViabilityCheckForJob,
+  type BackfillPostingViabilityChecksInput,
+  type BackfillPostingViabilityChecksResult,
+  type RunPostingViabilityCheckInput,
+  type RunPostingViabilityCheckResult,
+} from './posting-check';

@@ -37,7 +37,9 @@
     "scout:feedback:validate": "tsx scripts/scout-feedback-validate.ts",
     "scout:feedback:validate:local": "dotenv -e .env -- npm run scout:feedback:validate",
     "scout:learning:validate": "tsx scripts/scout-learning-validate.ts",
-    "scout:learning:validate:local": "dotenv -e .env -- npm run scout:learning:validate"
+    "scout:learning:validate:local": "dotenv -e .env -- npm run scout:learning:validate",
+    "scout:posting-check:backfill": "tsx scripts/scout-posting-check-backfill.ts",
+    "scout:posting-check:backfill:local": "dotenv -e .env -- npm run scout:posting-check:backfill --"
   },
   "devDependencies": {
     "@types/node": "^22.15.18",

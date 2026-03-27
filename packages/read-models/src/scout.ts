@@ -3,6 +3,7 @@ import {
   scoutQueueJobSchema,
   scoutRunSummarySchema,
   type JobListItem,
+  type PostingCheckSummary,
   type ScoutDecisionSummary,
   type ScoutJobDetail,
   type ScoutQueueJob,
@@ -62,6 +63,16 @@ function isMissingScoutDecisionTableError(error: unknown) {
   );
 }
 
+function isMissingPostingCheckTableError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code ?? '') : '';
+
+  return (
+    code === 'P2021' &&
+    (/PostingCheck/i.test(message) || /public\.PostingCheck/i.test(message) || /"PostingCheck"/i.test(message))
+  );
+}
+
 function provenanceFromJobUrl(jobUrl: string) {
   try {
     const url = new URL(jobUrl);
@@ -75,6 +86,38 @@ function provenanceFromJobUrl(jobUrl: string) {
       sourceUrl: jobUrl,
     };
   }
+}
+
+function mapLatestPostingCheck(postingCheck: {
+  id: string;
+  status: string;
+  checkerType: string;
+  checkerLabel: string;
+  originalUrl: string | null;
+  finalUrl: string | null;
+  replacementUrl: string | null;
+  sourceBoard: string | null;
+  evidenceJson: unknown;
+  notes: string | null;
+  createdAt: Date;
+} | null): PostingCheckSummary | null {
+  if (!postingCheck) {
+    return null;
+  }
+
+  return {
+    id: postingCheck.id,
+    status: postingCheck.status as PostingCheckSummary['status'],
+    checkerType: postingCheck.checkerType,
+    checkerLabel: postingCheck.checkerLabel,
+    checkedAt: postingCheck.createdAt.toISOString(),
+    originalUrl: postingCheck.originalUrl,
+    finalUrl: postingCheck.finalUrl,
+    replacementUrl: postingCheck.replacementUrl,
+    sourceBoard: postingCheck.sourceBoard,
+    evidence: asStringArray(postingCheck.evidenceJson),
+    notes: postingCheck.notes,
+  };
 }
 
 function mapLatestDecision(decision: {
@@ -105,6 +148,7 @@ function mapScoutQueueJob(job: any): ScoutQueueJob {
   const scorecard = job.scorecards?.[0] ?? null;
   const activeApplication = job.applications?.[0] ?? null;
   const latestDecision = job.scoutDecisions?.[0] ?? null;
+  const latestPostingCheck = job.postingChecks?.[0] ?? null;
 
   return scoutQueueJobSchema.parse({
     id: job.id,
@@ -122,6 +166,23 @@ function mapScoutQueueJob(job: any): ScoutQueueJob {
         : null,
     topReasons: asStringArray(scorecard?.topReasonsJson),
     risks: asStringArray(scorecard?.risksJson),
+    latestPostingCheck: mapLatestPostingCheck(
+      latestPostingCheck
+        ? {
+            id: latestPostingCheck.id,
+            status: String(latestPostingCheck.status),
+            checkerType: String(latestPostingCheck.checkerType),
+            checkerLabel: String(latestPostingCheck.checkerLabel),
+            originalUrl: latestPostingCheck.originalUrl ?? null,
+            finalUrl: latestPostingCheck.finalUrl ?? null,
+            replacementUrl: latestPostingCheck.replacementUrl ?? null,
+            sourceBoard: latestPostingCheck.sourceBoard ?? null,
+            evidenceJson: latestPostingCheck.evidenceJson,
+            notes: latestPostingCheck.notes ?? null,
+            createdAt: latestPostingCheck.createdAt,
+          }
+        : null,
+    ),
     activeApplication: activeApplication
       ? {
           id: activeApplication.id,
@@ -167,6 +228,10 @@ async function getScoutQueue(status: ScoutQueueStatus): Promise<ScoutQueueJob[]>
           orderBy: { createdAt: 'desc' },
           take: 1,
         },
+        postingChecks: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
       },
       orderBy: [{ updatedAt: 'desc' }, { lastSeenAt: 'desc' }],
       take: 50,
@@ -174,7 +239,10 @@ async function getScoutQueue(status: ScoutQueueStatus): Promise<ScoutQueueJob[]>
 
     return jobs.map(mapScoutQueueJob);
   } catch (error) {
-    if (!isMissingScoutDecisionTableError(error)) {
+    const missingDecisionTable = isMissingScoutDecisionTableError(error);
+    const missingPostingCheckTable = isMissingPostingCheckTableError(error);
+
+    if (!missingDecisionTable && !missingPostingCheckTable) {
       throw error;
     }
 
@@ -195,12 +263,34 @@ async function getScoutQueue(status: ScoutQueueStatus): Promise<ScoutQueueJob[]>
           orderBy: { createdAt: 'desc' },
           take: 1,
         },
+        ...(missingDecisionTable
+          ? {}
+          : {
+              scoutDecisions: {
+                orderBy: { createdAt: 'desc' as const },
+                take: 1,
+              },
+            }),
+        ...(missingPostingCheckTable
+          ? {}
+          : {
+              postingChecks: {
+                orderBy: { createdAt: 'desc' as const },
+                take: 1,
+              },
+            }),
       },
       orderBy: [{ updatedAt: 'desc' }, { lastSeenAt: 'desc' }],
       take: 50,
     });
 
-    return jobs.map((job) => mapScoutQueueJob({ ...job, scoutDecisions: [] }));
+    return jobs.map((job) =>
+      mapScoutQueueJob({
+        ...job,
+        scoutDecisions: missingDecisionTable ? [] : (job as any).scoutDecisions,
+        postingChecks: missingPostingCheckTable ? [] : (job as any).postingChecks,
+      }),
+    );
   }
 }
 
@@ -249,6 +339,10 @@ export async function getScoutJobDetail(jobId: string): Promise<ScoutJobDetail |
           orderBy: { createdAt: 'desc' },
           take: 1,
         },
+        postingChecks: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
         sourceLinks: {
           include: {
             sourceRecord: true,
@@ -259,7 +353,10 @@ export async function getScoutJobDetail(jobId: string): Promise<ScoutJobDetail |
       },
     });
   } catch (error) {
-    if (!isMissingScoutDecisionTableError(error)) {
+    const missingDecisionTable = isMissingScoutDecisionTableError(error);
+    const missingPostingCheckTable = isMissingPostingCheckTableError(error);
+
+    if (!missingDecisionTable && !missingPostingCheckTable) {
       throw error;
     }
 
@@ -280,6 +377,22 @@ export async function getScoutJobDetail(jobId: string): Promise<ScoutJobDetail |
           orderBy: { createdAt: 'desc' },
           take: 1,
         },
+        ...(missingDecisionTable
+          ? {}
+          : {
+              scoutDecisions: {
+                orderBy: { createdAt: 'desc' as const },
+                take: 1,
+              },
+            }),
+        ...(missingPostingCheckTable
+          ? {}
+          : {
+              postingChecks: {
+                orderBy: { createdAt: 'desc' as const },
+                take: 1,
+              },
+            }),
         sourceLinks: {
           include: {
             sourceRecord: true,
@@ -291,7 +404,11 @@ export async function getScoutJobDetail(jobId: string): Promise<ScoutJobDetail |
     });
 
     if (job) {
-      job = { ...job, scoutDecisions: [] };
+      job = {
+        ...job,
+        scoutDecisions: missingDecisionTable ? [] : (job as any).scoutDecisions,
+        postingChecks: missingPostingCheckTable ? [] : (job as any).postingChecks,
+      };
     }
   }
 

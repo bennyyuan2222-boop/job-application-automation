@@ -16,11 +16,24 @@ const VALID_AUTO_ACTIONS = ['none', 'shortlist', 'archive'] as const;
 const DEFAULT_JOB_SEARCHER_SESSION_KEY = 'agent:job-searcher:main';
 const REVIEW_SESSION_PREFIX = 'agent:job-searcher:scout-review:';
 const REVIEW_SESSION_ENV_KEY = 'SCOUT_JOB_SEARCHER_SESSION_KEY';
+const POSTING_CHECK_SESSION_PREFIX = 'agent:job-searcher:posting-check:';
 const DEFAULT_BATCH_SIZE = 10;
 const DEFAULT_TIMEOUT_SECONDS = 180;
 const DEFAULT_POLL_INTERVAL_MS = 1500;
+const VALID_POSTING_STATUSES = ['live', 'probably_live', 'uncertain', 'dead'] as const;
 
 type JobSearcherAutoAction = (typeof VALID_AUTO_ACTIONS)[number];
+export type JobPostingStatus = (typeof VALID_POSTING_STATUSES)[number];
+
+export type JobPostingCheckResult = {
+  jobId: string;
+  postingStatus: JobPostingStatus;
+  finalUrl: string | null;
+  replacementUrl: string | null;
+  sourceBoard: string | null;
+  evidence: string[];
+  notes: string | null;
+};
 
 type OpenClawMessage = {
   role?: string;
@@ -71,6 +84,53 @@ export async function reviewJobsWithJobSearcherAgent(args: {
   return decisions;
 }
 
+export async function checkJobPostingWithJobSearcherAgent(args: {
+  jobId: string;
+  title: string;
+  companyName: string;
+  locationText: string;
+  originalUrl: string;
+  sourceBoard?: string | null;
+  timeoutSeconds?: number;
+}): Promise<JobPostingCheckResult> {
+  const currentRunnerAgentId = detectCurrentOpenClawAgentId();
+  const sessionKey = buildPostingCheckSessionKey(args.jobId);
+
+  if (currentRunnerAgentId === 'job-searcher' && sessionKey === DEFAULT_JOB_SEARCHER_SESSION_KEY) {
+    throw new Error(
+      `Refusing to call default ${DEFAULT_JOB_SEARCHER_SESSION_KEY} from inside job-searcher; use a dedicated posting-check session instead.`,
+    );
+  }
+
+  await gatewayCall('sessions.create', {
+    agentId: 'job-searcher',
+    key: sessionKey,
+    label: buildPostingCheckSessionLabel(args.jobId),
+  });
+
+  const message = buildPostingCheckPrompt(args);
+  const sendResult = await gatewayCall('sessions.send', {
+    key: sessionKey,
+    message,
+  });
+  const messageSeq = Number(sendResult?.messageSeq ?? 0);
+  const payloadText = await waitForAssistantJsonReply({
+    sessionKey,
+    afterSeq: messageSeq,
+    timeoutSeconds: args.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS,
+  });
+  const responseJson = extractJsonBlock(payloadText);
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(responseJson);
+  } catch (error) {
+    throw new Error(`Failed to parse job-searcher posting-check JSON payload: ${getErrorMessage(error)}\nPayload: ${payloadText}`);
+  }
+
+  return validatePostingCheckResponse(parsed, args.jobId);
+}
+
 async function runJobSearcherReview(args: {
   runId: string;
   sourceKey: string;
@@ -103,7 +163,7 @@ async function runJobSearcherReview(args: {
     message,
   });
   const messageSeq = Number(sendResult?.messageSeq ?? 0);
-  const payloadText = await waitForAssistantReply({
+  const payloadText = await waitForAssistantJsonReply({
     sessionKey,
     afterSeq: messageSeq,
     timeoutSeconds: args.timeoutSeconds,
@@ -199,6 +259,98 @@ function buildJobSearcherPrompt(args: {
   ].join('\n');
 }
 
+function buildPostingCheckPrompt(args: {
+  jobId: string;
+  title: string;
+  companyName: string;
+  locationText: string;
+  originalUrl: string;
+  sourceBoard?: string | null;
+}) {
+  return [
+    'You are receiving an internal machine-consumed posting viability check request from the Job Ops Scout lane.',
+    'This is not a user-facing reply. You may use tools. Do not send acknowledgement/progress messages. After using any tools, your first assistant text reply must be ONLY valid JSON.',
+    '',
+    'Your task:',
+    '- check whether the canonical job URL still points to a real, actionable job posting',
+    '- confirm title/company/location as best you can',
+    '- detect dead, stale, redirected, removed, or unclear postings',
+    '- optionally do a light recovery check for a replacement URL if the posting moved',
+    '- keep the recovery attempt shallow; do not do a sprawling hunt',
+    '',
+    'Return ONLY valid JSON matching this exact schema:',
+    '{',
+    '  "jobId": "string",',
+    '  "postingStatus": "live" | "probably_live" | "uncertain" | "dead",',
+    '  "finalUrl": "string | null",',
+    '  "replacementUrl": "string | null",',
+    '  "sourceBoard": "string | null",',
+    '  "evidence": ["1-5 concise observations"],',
+    '  "notes": "string | null"',
+    '}',
+    '',
+    'Classification rules:',
+    '- live: clearly active detail page with matching identity and a usable apply path or strong open signals',
+    '- probably_live: likely active, but a detail or two is weak/incomplete',
+    '- uncertain: conflicting or insufficient evidence, blocked inspection, or JS-heavy flow that cannot be trusted',
+    '- dead: explicit closure/removal, 404, generic redirect with no matching job, or clearly non-actionable shell',
+    '',
+    'Job payload:',
+    JSON.stringify(
+      {
+        jobId: args.jobId,
+        title: args.title,
+        companyName: args.companyName,
+        locationText: args.locationText,
+        originalUrl: args.originalUrl,
+        sourceBoard: args.sourceBoard ?? null,
+      },
+      null,
+      2,
+    ),
+  ].join('\n');
+}
+
+function validatePostingCheckResponse(parsed: any, expectedJobId: string): JobPostingCheckResult {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('job-searcher posting-check response must be a JSON object');
+  }
+
+  if (typeof parsed.jobId !== 'string' || parsed.jobId !== expectedJobId) {
+    throw new Error(`job-searcher posting-check returned unexpected jobId: ${String(parsed.jobId ?? '')}`);
+  }
+
+  const postingStatus = VALID_POSTING_STATUSES.includes(parsed.postingStatus) ? parsed.postingStatus : null;
+  if (!postingStatus) {
+    throw new Error(`job-searcher posting-check returned invalid status for ${expectedJobId}`);
+  }
+
+  const evidence = Array.isArray(parsed.evidence)
+    ? parsed.evidence
+        .filter((value: unknown): value is string => typeof value === 'string')
+        .map((value: string) => value.trim())
+        .filter(Boolean)
+        .slice(0, 5)
+    : [];
+
+  if (evidence.length === 0) {
+    throw new Error(`job-searcher posting-check returned no evidence for ${expectedJobId}`);
+  }
+
+  return {
+    jobId: expectedJobId,
+    postingStatus,
+    finalUrl: typeof parsed.finalUrl === 'string' && parsed.finalUrl.trim().length > 0 ? parsed.finalUrl.trim() : null,
+    replacementUrl:
+      typeof parsed.replacementUrl === 'string' && parsed.replacementUrl.trim().length > 0
+        ? parsed.replacementUrl.trim()
+        : null,
+    sourceBoard: typeof parsed.sourceBoard === 'string' && parsed.sourceBoard.trim().length > 0 ? parsed.sourceBoard.trim() : null,
+    evidence,
+    notes: typeof parsed.notes === 'string' && parsed.notes.trim().length > 0 ? parsed.notes.trim() : null,
+  };
+}
+
 function validateJobSearcherResponse(parsed: any, candidates: JobSearcherReviewCandidate[]) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('job-searcher response must be a JSON object');
@@ -274,20 +426,21 @@ function validateJobSearcherResponse(parsed: any, candidates: JobSearcherReviewC
   return decisions;
 }
 
-async function waitForAssistantReply(args: { sessionKey: string; afterSeq: number; timeoutSeconds: number }) {
+async function waitForAssistantJsonReply(args: { sessionKey: string; afterSeq: number; timeoutSeconds: number }) {
   const deadline = Date.now() + args.timeoutSeconds * 1000;
 
   while (Date.now() < deadline) {
     const session = await gatewayCall('sessions.get', { key: args.sessionKey });
     const messages = Array.isArray(session?.messages) ? (session.messages as OpenClawMessage[]) : [];
-    const assistantReply = messages.find((message) => {
-      const seq = Number(message?.__openclaw?.seq ?? 0);
-      return message?.role === 'assistant' && seq > args.afterSeq;
-    });
 
-    if (assistantReply) {
-      const text = extractAssistantText(assistantReply);
-      if (text) {
+    for (const message of [...messages].reverse()) {
+      const seq = Number(message?.__openclaw?.seq ?? 0);
+      if (message?.role !== 'assistant' || seq <= args.afterSeq) {
+        continue;
+      }
+
+      const text = extractAssistantText(message);
+      if (text && containsJsonObject(text)) {
         return text;
       }
     }
@@ -295,11 +448,11 @@ async function waitForAssistantReply(args: { sessionKey: string; afterSeq: numbe
     await sleep(DEFAULT_POLL_INTERVAL_MS);
   }
 
-  throw new Error(`Timed out waiting for job-searcher reply on ${args.sessionKey}`);
+  throw new Error(`Timed out waiting for job-searcher JSON reply on ${args.sessionKey}`);
 }
 
 function extractAssistantText(message: OpenClawMessage) {
-  const text = Array.isArray(message.content)
+  return Array.isArray(message.content)
     ? message.content
         .filter((item) => item?.type === 'text' && typeof item?.text === 'string')
         .map((item) => item.text?.trim() ?? '')
@@ -307,12 +460,6 @@ function extractAssistantText(message: OpenClawMessage) {
         .join('\n')
         .trim()
     : '';
-
-  if (!text) {
-    throw new Error('job-searcher returned no text payload');
-  }
-
-  return text;
 }
 
 function extractJsonBlock(input: string) {
@@ -328,6 +475,15 @@ function extractJsonBlock(input: string) {
   }
 
   return trimmed.slice(first, last + 1);
+}
+
+function containsJsonObject(input: string) {
+  try {
+    extractJsonBlock(input);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function clampConfidence(value: unknown) {
@@ -378,6 +534,15 @@ function buildReviewSessionKey(runId: string, batchIndex: number) {
 
 function buildReviewSessionLabel(runId: string, batchIndex: number) {
   return `Scout review ${runId} batch ${batchIndex + 1}`;
+}
+
+function buildPostingCheckSessionKey(jobId: string) {
+  const safeJobId = jobId.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/(^-|-$)/g, '');
+  return `${POSTING_CHECK_SESSION_PREFIX}${safeJobId}:${Date.now()}`;
+}
+
+function buildPostingCheckSessionLabel(jobId: string) {
+  return `Posting check ${jobId} ${Date.now()}`;
 }
 
 async function gatewayCall(method: string, params: Record<string, unknown>) {

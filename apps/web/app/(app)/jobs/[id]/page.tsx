@@ -15,6 +15,14 @@ function formatDateTime(value: string) {
   return new Date(value).toLocaleString();
 }
 
+function formatPostingStatus(value: string | null | undefined) {
+  if (!value) {
+    return 'not checked';
+  }
+
+  return value.replaceAll('_', ' ');
+}
+
 function applicationRouteForStatus(applicationId: string, status: string) {
   if (status === 'applying' || status === 'submit_review' || status === 'submitted') {
     return `/applications/${applicationId}`;
@@ -32,6 +40,7 @@ export default async function ScoutJobDetailPage({ params }: { params: Promise<{
   }
 
   const decision = job.latestDecision;
+  const postingCheck = job.latestPostingCheck;
   const primarySourceUrl = job.sourceRecords.find((record) => record.sourceUrl)?.sourceUrl ?? job.provenance?.sourceUrl ?? null;
 
   return (
@@ -81,6 +90,8 @@ export default async function ScoutJobDetailPage({ params }: { params: Promise<{
               <Link href={applicationRouteForStatus(job.activeApplication.id, job.activeApplication.status)} className="button-link">
                 Open {job.activeApplication.status.replaceAll('_', ' ')}
               </Link>
+            ) : postingCheck && (postingCheck.status === 'dead' || postingCheck.status === 'uncertain') ? (
+              <span className="muted small">Re-verify posting before starting application</span>
             ) : (
               <form method="get" action={`/api/actions/jobs/${job.id}/start`}>
                 <button type="submit">Start application</button>
@@ -101,6 +112,47 @@ export default async function ScoutJobDetailPage({ params }: { params: Promise<{
               Open source listing
             </a>
           ) : null}
+          <form method="post" action={`/api/actions/jobs/${job.id}/verify-posting?next=/jobs/${job.id}`}>
+            <button type="submit" className="button-link secondary">
+              Verify posting
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>Posting viability</h2>
+        <div className="stack-blocks">
+          <div>
+            <strong>Status:</strong> {formatPostingStatus(postingCheck?.status)}
+          </div>
+          {postingCheck ? (
+            <>
+              <div className="muted small">
+                checked {formatDateTime(postingCheck.checkedAt)} · {postingCheck.checkerLabel}
+              </div>
+              {postingCheck.notes ? <div>{postingCheck.notes}</div> : null}
+              {postingCheck.evidence.length > 0 ? (
+                <div>
+                  <div className="small" style={{ fontWeight: 600 }}>
+                    Evidence
+                  </div>
+                  <ul style={{ marginTop: '.35rem', paddingLeft: '1.2rem' }}>
+                    {postingCheck.evidence.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              <div className="stack-blocks small muted">
+                {postingCheck.originalUrl ? <div>original: {postingCheck.originalUrl}</div> : null}
+                {postingCheck.finalUrl ? <div>final: {postingCheck.finalUrl}</div> : null}
+                {postingCheck.replacementUrl ? <div>replacement: {postingCheck.replacementUrl}</div> : null}
+              </div>
+            </>
+          ) : (
+            <p className="muted">No posting verification recorded yet.</p>
+          )}
         </div>
       </section>
 

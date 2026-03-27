@@ -123,6 +123,13 @@ enum ScoutDecisionVerdict {
   needs_human_review
 }
 
+enum PostingCheckStatus {
+  live
+  probably_live
+  uncertain
+  dead
+}
+
 model User {
   id          String    @id @default(cuid())
   email       String    @unique
@@ -178,6 +185,7 @@ model Job {
   updatedAt           DateTime        @updatedAt
   scorecards          JobScorecard[]
   scoutDecisions      ScoutDecision[]
+  postingChecks       PostingCheck[]
   applications        Application[]
   sourceLinks         JobSourceLink[]
   notes               JobNote[]
@@ -413,6 +421,25 @@ model ScoutDecision {
   @@unique([jobId, scrapeRunId])
   @@index([jobId, createdAt])
   @@index([scrapeRunId, createdAt])
+}
+
+model PostingCheck {
+  id             String             @id @default(cuid())
+  jobId           String
+  job             Job                @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  status          PostingCheckStatus
+  checkerType     ActorType          @default(agent)
+  checkerLabel    String
+  originalUrl     String?
+  finalUrl        String?
+  replacementUrl  String?
+  sourceBoard     String?
+  evidenceJson    Json?
+  notes           String?
+  createdAt       DateTime           @default(now())
+
+  @@index([jobId, createdAt])
+  @@index([status, createdAt])
 }
 
 model AuditEvent {

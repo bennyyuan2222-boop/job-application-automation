@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ActorType, JobStatus, prisma } from '@job-ops/db';
 import { makeAuditEvent } from '@job-ops/domain';
+import { runPostingViabilityCheckForJob } from '@job-ops/scout-worker';
 
 import { sameOriginUrl } from '../../../../../../lib/redirects';
 import { requireRouteSession } from '../../../../../../lib/route-auth';
@@ -103,6 +104,16 @@ export async function POST(request: NextRequest, context: { params: Promise<{ jo
       ],
     });
   });
+
+  try {
+    await runPostingViabilityCheckForJob({
+      jobId,
+      actorType: ActorType.user,
+      actorLabel: session.email,
+    });
+  } catch {
+    // The worker records a failure audit event; keep the manual shortlist action successful.
+  }
 
   return NextResponse.redirect(sameOriginUrl(request, resolveNextPath(request, '/inbox')));
 }
