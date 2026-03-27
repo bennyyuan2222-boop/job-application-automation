@@ -88,7 +88,7 @@ export async function requestTailoringFromNeedleAgent(args: {
   sourceTailoringRunId?: string | null;
   priorRuns: NeedlePriorRunContext[];
   baseResumeCandidates: ResumeCandidate[];
-  heuristicHint?: {
+  provisionalBaseHint?: {
     selectedResumeVersionId: string;
     selectedResumeTitle: string;
     reasons: string[];
@@ -180,7 +180,7 @@ export function buildNeedlePromptForTest(args: {
   sourceTailoringRunId?: string | null;
   priorRuns: NeedlePriorRunContext[];
   baseResumeCandidates: ResumeCandidate[];
-  heuristicHint?: {
+  provisionalBaseHint?: {
     selectedResumeVersionId: string;
     selectedResumeTitle: string;
     reasons: string[];
@@ -281,8 +281,8 @@ export function buildNeedlePromptForTest(args: {
     'Prior run context (latest first, if any):',
     JSON.stringify(priorRuns, null, 2),
     '',
-    'Heuristic hint (non-binding, you may disagree if the evidence supports a better base):',
-    JSON.stringify(args.heuristicHint ?? null, null, 2),
+    'Provisional base hint (non-binding, you may disagree if the evidence supports a better base):',
+    JSON.stringify(args.provisionalBaseHint ?? null, null, 2),
   ].join('\n');
 }
 

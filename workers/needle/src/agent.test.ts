@@ -130,7 +130,7 @@ test('buildNeedlePromptForTest includes app context, candidate resumes, and cont
     },
     priorRuns: [],
     baseResumeCandidates: candidates,
-    heuristicHint: {
+    provisionalBaseHint: {
       selectedResumeVersionId: candidates[0]!.id,
       selectedResumeTitle: candidates[0]!.title,
       reasons: ['Closest truthful fit.'],

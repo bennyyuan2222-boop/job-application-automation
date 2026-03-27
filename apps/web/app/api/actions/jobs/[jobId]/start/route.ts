@@ -1,11 +1,10 @@
 import { revalidatePath } from 'next/cache';
-import { ActorType, ApplicationStatus, ResumeVersionKind, prisma } from '@job-ops/db';
-import { makeAuditEvent } from '@job-ops/domain';
-import { generateTailoringDraftForApplication } from '@job-ops/needle-worker';
+import { ApplicationStatus, prisma } from '@job-ops/db';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { requireRouteSession } from '../../../../../../lib/route-auth';
 import { sameOriginUrl } from '../../../../../../lib/redirects';
+import { startApplicationForJob } from '../../../../../../lib/application-start';
 
 export const dynamic = 'force-dynamic';
 
@@ -86,62 +85,30 @@ export async function GET(
     return NextResponse.redirect(sameOriginUrl(request, `/jobs/${jobId}`));
   }
 
-  const fallbackBaseResume = await prisma.resumeVersion.findFirst({
-    where: { kind: ResumeVersionKind.base },
-    orderBy: { createdAt: 'asc' },
-  });
+  let applicationId: string;
 
-  if (!fallbackBaseResume) {
-    return NextResponse.redirect(sameOriginUrl(request, '/shortlist'));
+  try {
+    const result = await startApplicationForJob({
+      jobId,
+      jobStatus: job.status,
+      actorLabel: session.email,
+      initialTailoringInstructions: 'Auto-generated after starting application from shortlist.',
+    });
+    applicationId = result.applicationId;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/No base resume versions are available/i.test(message)) {
+      return NextResponse.redirect(sameOriginUrl(request, '/shortlist'));
+    }
+    throw error;
   }
-
-  const application = await prisma.$transaction(async (tx) => {
-    const createdApplication = await tx.application.create({
-      data: {
-        jobId,
-        status: ApplicationStatus.tailoring,
-        baseResumeVersionId: fallbackBaseResume.id,
-      },
-    });
-
-    await tx.auditEvent.createMany({
-      data: [
-        makeAuditEvent({
-          entityType: 'application',
-          entityId: createdApplication.id,
-          eventType: 'application.created',
-          actorType: ActorType.user,
-          actorLabel: session.email,
-          afterState: { status: ApplicationStatus.tailoring, jobId },
-          payloadJson: { jobId, baseResumeVersionId: fallbackBaseResume.id },
-        }),
-        makeAuditEvent({
-          entityType: 'job',
-          entityId: jobId,
-          eventType: 'job.application_started',
-          actorType: ActorType.user,
-          actorLabel: session.email,
-          beforeState: { status: job.status },
-          afterState: { status: job.status },
-          payloadJson: { applicationId: createdApplication.id },
-        }),
-      ],
-    });
-
-    return createdApplication;
-  });
-
-  await generateTailoringDraftForApplication(application.id, {
-    actorLabel: session.email,
-    instructions: 'Auto-generated after starting application from shortlist.',
-  });
 
   revalidatePath('/');
   revalidatePath('/inbox');
   revalidatePath('/shortlist');
   revalidatePath('/tailoring');
-  revalidatePath(`/tailoring/${application.id}`);
+  revalidatePath(`/tailoring/${applicationId}`);
   revalidatePath('/activity');
 
-  return NextResponse.redirect(sameOriginUrl(request, `/tailoring/${application.id}`));
+  return NextResponse.redirect(sameOriginUrl(request, `/tailoring/${applicationId}`));
 }

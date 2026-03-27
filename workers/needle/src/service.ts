@@ -114,9 +114,18 @@ async function loadBaseResumeCandidates(): Promise<ResumeCandidate[]> {
   return baseResumes.map((resume) => toResumeCandidate(resume));
 }
 
-function resolveNeedleGenerationMode() {
-  const configured = process.env.NEEDLE_GENERATION_MODE?.trim().toLowerCase();
-  return configured === 'heuristic' ? 'heuristic' : 'agent';
+type GenerateTailoringDraftOptions = {
+  instructions?: string;
+  actorLabel?: string;
+  sourceTailoringRunId?: string;
+};
+
+type TailoringDraftRuntimeMode = 'agent' | 'heuristic';
+
+function assertTailoringDraftRuntimeModeAllowed(mode: TailoringDraftRuntimeMode) {
+  if (mode === 'heuristic' && process.env.NODE_ENV === 'production') {
+    throw new Error('Heuristic tailoring generation is dev/test-only and cannot run in production.');
+  }
 }
 
 function dedupeStrings(values: string[]) {
@@ -272,10 +281,25 @@ function toJsonValue(value: unknown): Prisma.InputJsonValue {
 
 export async function generateTailoringDraftForApplication(
   applicationId: string,
-  options?: { instructions?: string; actorLabel?: string; sourceTailoringRunId?: string },
+  options?: GenerateTailoringDraftOptions,
 ) {
+  return generateTailoringDraftForApplicationWithMode(applicationId, options, 'agent');
+}
+
+export async function generateTailoringDraftForApplicationHeuristicDevOnly(
+  applicationId: string,
+  options?: GenerateTailoringDraftOptions,
+) {
+  return generateTailoringDraftForApplicationWithMode(applicationId, options, 'heuristic');
+}
+
+async function generateTailoringDraftForApplicationWithMode(
+  applicationId: string,
+  options: GenerateTailoringDraftOptions | undefined,
+  generationMode: TailoringDraftRuntimeMode,
+) {
+  assertTailoringDraftRuntimeModeAllowed(generationMode);
   const actorLabel = options?.actorLabel ?? 'needle';
-  const generationMode = resolveNeedleGenerationMode();
   const startedAt = Date.now();
   const application = await loadApplicationContext(applicationId);
   const candidates = await loadBaseResumeCandidates();
@@ -289,6 +313,9 @@ export async function generateTailoringDraftForApplication(
   if (!heuristicBase) {
     throw new Error(`Selected base resume not found: ${heuristicSelection.resumeVersionId}`);
   }
+  const heuristicBaseSelectionRecord = buildBaseSelectionRecord(heuristicSelection, heuristicBase, candidates.length);
+  const initialInputResumeVersionId =
+    generationMode === 'agent' ? application.baseResumeVersionId : heuristicBase.id;
 
   const shouldMoveToReview = application.status !== ApplicationStatus.tailoring_review;
   if (shouldMoveToReview) {
@@ -298,16 +325,16 @@ export async function generateTailoringDraftForApplication(
   const run = await prisma.tailoringRun.create({
     data: {
       applicationId: application.id,
-      inputResumeVersionId: heuristicBase.id,
+      inputResumeVersionId: initialInputResumeVersionId,
       sourceTailoringRunId: options?.sourceTailoringRunId ?? null,
       status: 'generating',
       instructions: options?.instructions ?? null,
       jobSnapshotJson: jobContext,
-      baseSelectionJson: buildBaseSelectionRecord(heuristicSelection, heuristicBase, candidates.length),
+      ...(generationMode === 'heuristic' ? { baseSelectionJson: heuristicBaseSelectionRecord } : {}),
       generationMetadataJson:
         generationMode === 'agent'
           ? buildAgentGenerationMetadata({
-              strategyVersion: 'needle-agent-phase2',
+              strategyVersion: 'needle-agent-phase3',
               provider: 'openclaw',
               latencyMs: 0,
               sessionKey: application.needleSessionKey,
@@ -347,7 +374,7 @@ export async function generateTailoringDraftForApplication(
         sourceTailoringRunId: options?.sourceTailoringRunId ?? null,
         priorRuns: mapPriorRunsForNeedle(application),
         baseResumeCandidates: candidates,
-        heuristicHint: {
+        provisionalBaseHint: {
           selectedResumeVersionId: heuristicBase.id,
           selectedResumeTitle: heuristicBase.title,
           reasons: heuristicSelection.reasons,
@@ -575,7 +602,7 @@ export async function generateTailoringDraftForApplication(
           generationMetadataJson:
             generationMode === 'agent'
               ? buildAgentGenerationMetadata({
-                  strategyVersion: 'needle-agent-phase2',
+                  strategyVersion: 'needle-agent-phase3',
                   provider: 'openclaw',
                   latencyMs: Date.now() - startedAt,
                   sessionKey: sessionKeyForUpdate,
