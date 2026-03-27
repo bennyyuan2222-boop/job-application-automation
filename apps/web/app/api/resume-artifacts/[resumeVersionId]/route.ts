@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@job-ops/db';
-import { buildResumeArtifactFilename } from '@job-ops/tailoring';
+import { buildResumeArtifactFilename, coerceResumeDocument, renderResumePdf } from '@job-ops/tailoring';
 
 export async function GET(
   _request: Request,
@@ -14,6 +14,7 @@ export async function GET(
       id: true,
       title: true,
       contentMarkdown: true,
+      sectionsJson: true,
     },
   });
 
@@ -21,12 +22,17 @@ export async function GET(
     return new NextResponse('Resume artifact not found', { status: 404 });
   }
 
-  return new NextResponse(resumeVersion.contentMarkdown, {
+  const document = coerceResumeDocument(resumeVersion.sectionsJson, resumeVersion.contentMarkdown);
+  const pdfBytes = renderResumePdf(resumeVersion.title, document);
+  const pdfBody = new Blob([Uint8Array.from(pdfBytes)], { type: 'application/pdf' });
+
+  return new NextResponse(pdfBody, {
     status: 200,
     headers: {
-      'Content-Type': 'text/markdown; charset=utf-8',
-      'Content-Disposition': `inline; filename="${buildResumeArtifactFilename(resumeVersion.title)}"`,
-      'Cache-Control': 'private, max-age=60',
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="${buildResumeArtifactFilename(resumeVersion.title, 'pdf')}"`,
+      'Cache-Control': 'private, max-age=300',
+      'Content-Length': String(pdfBytes.byteLength),
     },
   });
 }

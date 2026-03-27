@@ -670,13 +670,20 @@ export async function approveTailoringRunForApplication(
     throw new Error(`Approved resume version not found: ${run.outputResumeVersionId}`);
   }
 
-  const artifactFilename = buildResumeArtifactFilename(approvedResume.title);
+  const artifactFilename = buildResumeArtifactFilename(approvedResume.title, 'pdf');
   const artifactPath = buildResumeArtifactPath(approvedResume.id);
 
   await prisma.$transaction(async (tx) => {
     await tx.tailoringRun.update({
       where: { id: run.id },
       data: { status: 'approved' },
+    });
+
+    await tx.resumeVersion.update({
+      where: { id: approvedResume.id },
+      data: {
+        renderedPdfUrl: artifactPath,
+      },
     });
 
     await tx.application.update({
