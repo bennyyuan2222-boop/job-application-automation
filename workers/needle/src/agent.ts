@@ -1,3 +1,4 @@
+import { accessSync, constants as fsConstants } from 'node:fs';
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -16,6 +17,7 @@ const DEFAULT_NEEDLE_AGENT_ID = process.env.NEEDLE_AGENT_ID?.trim() || 'resume-t
 const DEFAULT_TIMEOUT_SECONDS = parseInteger(process.env.NEEDLE_AGENT_TIMEOUT_SECONDS, 240);
 const DEFAULT_POLL_INTERVAL_MS = parseInteger(process.env.NEEDLE_AGENT_POLL_INTERVAL_MS, 1500);
 const SESSION_PREFIX = process.env.NEEDLE_AGENT_SESSION_PREFIX?.trim() || 'agent:resume-tailor:application:';
+const OPENCLAW_BIN_CANDIDATES = ['/opt/homebrew/bin/openclaw', '/usr/local/bin/openclaw', '/bin/openclaw'];
 
 type OpenClawMessage = {
   role?: string;
@@ -348,8 +350,10 @@ function extractJsonBlock(input: string) {
 }
 
 async function gatewayCall(method: string, params: Record<string, unknown>) {
+  const openclawBin = resolveOpenClawBin();
+
   try {
-    const { stdout, stderr } = await execFile(process.env.OPENCLAW_BIN || 'openclaw', ['gateway', 'call', method, '--json', '--params', JSON.stringify(params)], {
+    const { stdout, stderr } = await execFile(openclawBin, ['gateway', 'call', method, '--json', '--params', JSON.stringify(params)], {
       cwd: process.cwd(),
       env: {
         ...process.env,
@@ -370,10 +374,29 @@ async function gatewayCall(method: string, params: Record<string, unknown>) {
     const detail = [getErrorMessage(error), stderr, stdout].filter(Boolean).join('\n');
     throw new NeedleAgentError('needle_agent_gateway_failed', `Gateway call failed (${method}): ${detail}`, {
       method,
+      openclawBin,
       stderr,
       stdout,
     });
   }
+}
+
+function resolveOpenClawBin() {
+  const explicit = process.env.OPENCLAW_BIN?.trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  for (const candidate of OPENCLAW_BIN_CANDIDATES) {
+    try {
+      accessSync(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch {
+      // keep looking
+    }
+  }
+
+  return 'openclaw';
 }
 
 function buildApplicationSessionKey(applicationId: string) {

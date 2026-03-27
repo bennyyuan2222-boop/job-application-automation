@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { accessSync, constants as fsConstants } from 'node:fs';
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -21,6 +22,7 @@ const DEFAULT_BATCH_SIZE = 10;
 const DEFAULT_TIMEOUT_SECONDS = 180;
 const DEFAULT_POLL_INTERVAL_MS = 1500;
 const VALID_POSTING_STATUSES = ['live', 'probably_live', 'uncertain', 'dead'] as const;
+const OPENCLAW_BIN_CANDIDATES = ['/opt/homebrew/bin/openclaw', '/usr/local/bin/openclaw', '/bin/openclaw'];
 
 type JobSearcherAutoAction = (typeof VALID_AUTO_ACTIONS)[number];
 export type JobPostingStatus = (typeof VALID_POSTING_STATUSES)[number];
@@ -546,8 +548,10 @@ function buildPostingCheckSessionLabel(jobId: string) {
 }
 
 async function gatewayCall(method: string, params: Record<string, unknown>) {
+  const openclawBin = resolveOpenClawBin();
+
   try {
-    const { stdout, stderr } = await execFile(process.env.OPENCLAW_BIN || 'openclaw', ['gateway', 'call', method, '--json', '--params', JSON.stringify(params)], {
+    const { stdout, stderr } = await execFile(openclawBin, ['gateway', 'call', method, '--json', '--params', JSON.stringify(params)], {
       cwd: process.cwd(),
       env: {
         ...process.env,
@@ -568,6 +572,24 @@ async function gatewayCall(method: string, params: Record<string, unknown>) {
     const detail = [getErrorMessage(error), stderr, stdout].filter(Boolean).join('\n');
     throw new Error(`Gateway call failed (${method}): ${detail}`);
   }
+}
+
+function resolveOpenClawBin() {
+  const explicit = process.env.OPENCLAW_BIN?.trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  for (const candidate of OPENCLAW_BIN_CANDIDATES) {
+    try {
+      accessSync(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch {
+      // keep looking
+    }
+  }
+
+  return 'openclaw';
 }
 
 function sleep(ms: number) {
