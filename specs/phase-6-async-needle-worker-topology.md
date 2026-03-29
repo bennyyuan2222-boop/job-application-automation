@@ -19,6 +19,8 @@ Vercel-hosted server code cannot safely assume it can spawn the local `openclaw`
 
 Needle work is represented by `NeedleTask` records.
 
+Worker health is represented by `NeedleWorkerHeartbeat` rows.
+
 ### Task types
 - `generate_draft`
 - `request_edits`
@@ -29,6 +31,17 @@ Needle work is represented by `NeedleTask` records.
 - `completed`
 - `failed`
 - `cancelled`
+
+### Worker heartbeat
+Each worker updates a heartbeat row with:
+- worker label
+- process id / hostname
+- DB host
+- resolved OpenClaw binary path
+- current state (`polling`, `processing`, `idle`, `drained`, `error`)
+- last poll time
+- last claimed/completed task ids
+- last error code/message
 
 ## Current Vercel behavior
 
@@ -101,6 +114,7 @@ When healthy:
 - worker writes completed result + `resultTailoringRunId`
 - application moves to `tailoring_review`
 - UI auto-refreshes and shows the finished draft
+- worker heartbeat keeps updating while the queue drains
 
 ## Failure behavior
 
@@ -109,3 +123,7 @@ If the worker fails:
 - failure code/message are stored on the task
 - related Tailoring run may also show failed state if a run was already opened
 - UI should no longer imply the work is still in progress
+
+If a queued or processing task becomes stale for the same application and no fresh worker heartbeat exists:
+- the stale task is marked failed (`needle_task_stale_queue` / `needle_task_stale_processing`)
+- a new user-triggered action can enqueue a replacement task instead of getting stuck forever behind zombie dedupe
