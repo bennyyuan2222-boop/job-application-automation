@@ -141,5 +141,8 @@ test('buildNeedlePromptForTest includes app context, candidate resumes, and cont
   assert.match(prompt, /application-123/);
   assert.match(prompt, /Business Analyst Base Resume/);
   assert.match(prompt, /Return ONLY valid JSON/);
+  assert.match(prompt, /the first line must be Benny's actual name/);
+  assert.match(prompt, /preserve section order: EDUCATION, SKILLS, EXPERIENCE, PROJECTS, LEADERSHIP & ACTIVITIES/);
+  assert.match(prompt, /about 18-21 bullets total/);
   assert.match(prompt, /Emphasize KPI reporting without inflating ownership\./);
 });

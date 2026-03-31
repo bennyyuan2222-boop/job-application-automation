@@ -94,6 +94,7 @@ export type ResumeSection = {
 
 export type ResumeDocument = {
   meta?: {
+    displayName?: string;
     lane?: string;
     source?: string;
     summary?: string;

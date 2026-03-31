@@ -7,6 +7,25 @@ function slugify(value: string): string {
     .replace(/(^-|-$)/g, '') || 'section';
 }
 
+function stripInlineMarkdown(value: string): string {
+  return value
+    .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/__(.*?)__/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\\([\\`*_{}\[\]()#+\-.!])/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function hasMarkdownArtifacts(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+
+  return /\*\*|__|`|\[[^\]]+\]\([^)]+\)/.test(value);
+}
+
 export function buildResumeArtifactFilename(title: string, extension = 'md'): string {
   return `${slugify(title)}.${extension.replace(/^\./, '')}`;
 }
@@ -22,7 +41,7 @@ function toKind(title: string): ResumeSectionKind {
 }
 
 function parseHeadingLine(line: string) {
-  const clean = line.replace(/^###\s*/, '').trim();
+  const clean = stripInlineMarkdown(line.replace(/^###\s*/, '').trim());
   const parts = clean.split(' — ');
   const main = parts[0] ?? clean;
   const location = parts.slice(1).join(' — ') || undefined;
@@ -43,6 +62,19 @@ function parseHeadingLine(line: string) {
   };
 }
 
+function parseEducationHeadingLine(line: string): { heading: string; dateRange?: string } | null {
+  const clean = stripInlineMarkdown(line);
+  const match = clean.match(/^(.*?)\s+[—-]\s+(.+)$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    heading: match[1]?.trim() || clean,
+    dateRange: match[2]?.trim() || undefined,
+  };
+}
+
 function finalizeSection(sectionTitle: string | null, rawEntries: ResumeEntry[]): ResumeSection | null {
   if (!sectionTitle) {
     return null;
@@ -56,6 +88,94 @@ function finalizeSection(sectionTitle: string | null, rawEntries: ResumeEntry[])
   };
 }
 
+function normalizeEntry(entry: ResumeEntry): ResumeEntry {
+  return {
+    ...entry,
+    heading: entry.heading ? stripInlineMarkdown(entry.heading) : undefined,
+    subheading: entry.subheading ? stripInlineMarkdown(entry.subheading) : undefined,
+    location: entry.location ? stripInlineMarkdown(entry.location) : undefined,
+    dateRange: entry.dateRange ? stripInlineMarkdown(entry.dateRange) : undefined,
+    bullets: entry.bullets?.filter(Boolean).map((bullet) => stripInlineMarkdown(bullet)) ?? [],
+    lines: entry.lines?.filter(Boolean).map((line) => stripInlineMarkdown(line)) ?? [],
+  };
+}
+
+function normalizeDocument(document: ResumeDocument): ResumeDocument {
+  return {
+    meta: {
+      ...(document.meta?.displayName ? { displayName: stripInlineMarkdown(document.meta.displayName) } : {}),
+      ...(document.meta?.lane ? { lane: document.meta.lane } : {}),
+      ...(document.meta?.source ? { source: document.meta.source } : {}),
+      ...(document.meta?.summary ? { summary: stripInlineMarkdown(document.meta.summary) } : {}),
+      ...(document.meta?.keywords ? { keywords: document.meta.keywords.map((keyword) => stripInlineMarkdown(keyword)) } : {}),
+      ...(document.meta?.headerLines
+        ? { headerLines: document.meta.headerLines.map((line) => stripInlineMarkdown(line)).filter(Boolean) }
+        : {}),
+    },
+    sections: document.sections.map((section) => ({
+      ...section,
+      title: stripInlineMarkdown(section.title),
+      entries: section.entries.map(normalizeEntry),
+    })),
+  };
+}
+
+function documentHasMarkdownArtifacts(document: ResumeDocument): boolean {
+  const metaStrings = [
+    document.meta?.displayName,
+    document.meta?.summary,
+    ...(document.meta?.headerLines ?? []),
+    ...(document.meta?.keywords ?? []),
+  ];
+
+  if (metaStrings.some((value) => hasMarkdownArtifacts(value))) {
+    return true;
+  }
+
+  return document.sections.some((section) => {
+    if (hasMarkdownArtifacts(section.title)) {
+      return true;
+    }
+
+    return section.entries.some((entry) => {
+      return [
+        entry.heading,
+        entry.subheading,
+        entry.location,
+        entry.dateRange,
+        ...(entry.lines ?? []),
+        ...(entry.bullets ?? []),
+      ].some((value) => hasMarkdownArtifacts(value));
+    });
+  });
+}
+
+function mergeDocuments(primary: ResumeDocument, fallback: ResumeDocument): ResumeDocument {
+  const preferred = normalizeDocument(primary);
+  const backup = normalizeDocument(fallback);
+
+  return {
+    meta: {
+      ...(backup.meta?.displayName && !preferred.meta?.displayName ? { displayName: backup.meta.displayName } : {}),
+      ...(preferred.meta?.displayName ? { displayName: preferred.meta.displayName } : {}),
+      ...(preferred.meta?.lane ? { lane: preferred.meta.lane } : backup.meta?.lane ? { lane: backup.meta.lane } : {}),
+      ...(preferred.meta?.source ? { source: preferred.meta.source } : backup.meta?.source ? { source: backup.meta.source } : {}),
+      ...(preferred.meta?.summary ? { summary: preferred.meta.summary } : backup.meta?.summary ? { summary: backup.meta.summary } : {}),
+      ...(preferred.meta?.keywords?.length
+        ? { keywords: preferred.meta.keywords }
+        : backup.meta?.keywords?.length
+          ? { keywords: backup.meta.keywords }
+          : {}),
+      ...(preferred.meta?.headerLines?.length
+        ? { headerLines: preferred.meta.headerLines }
+        : backup.meta?.headerLines?.length
+          ? { headerLines: backup.meta.headerLines }
+          : {}),
+    },
+    sections: preferred.sections.length > 0 ? preferred.sections : backup.sections,
+  };
+}
+
 export function parseLegacyResumeMarkdown(
   contentMarkdown: string,
   meta?: ResumeDocument['meta'],
@@ -64,18 +184,14 @@ export function parseLegacyResumeMarkdown(
   const headerLines: string[] = [];
   const sections: ResumeSection[] = [];
 
+  let displayName = meta?.displayName ? stripInlineMarkdown(meta.displayName) : undefined;
   let currentSectionTitle: string | null = null;
   let currentEntries: ResumeEntry[] = [];
   let currentEntry: ResumeEntry | null = null;
 
   const flushEntry = () => {
     if (currentEntry) {
-      const normalized: ResumeEntry = {
-        ...currentEntry,
-        bullets: currentEntry.bullets?.filter(Boolean) ?? [],
-        lines: currentEntry.lines?.filter(Boolean) ?? [],
-      };
-      currentEntries.push(normalized);
+      currentEntries.push(normalizeEntry(currentEntry));
       currentEntry = null;
     }
   };
@@ -98,15 +214,20 @@ export function parseLegacyResumeMarkdown(
     }
 
     if (!currentSectionTitle && !trimmed.startsWith('## ')) {
-      if (!trimmed.startsWith('# ') && !trimmed.toLowerCase().startsWith('source file:')) {
-        headerLines.push(trimmed);
+      if (trimmed.startsWith('# ')) {
+        displayName = stripInlineMarkdown(trimmed.replace(/^#\s*/, ''));
+        continue;
+      }
+
+      if (!trimmed.toLowerCase().startsWith('source file:')) {
+        headerLines.push(stripInlineMarkdown(trimmed));
       }
       continue;
     }
 
     if (trimmed.startsWith('## ')) {
       flushSection();
-      currentSectionTitle = trimmed.replace(/^##\s*/, '').trim();
+      currentSectionTitle = stripInlineMarkdown(trimmed.replace(/^##\s*/, '').trim());
       continue;
     }
 
@@ -119,7 +240,7 @@ export function parseLegacyResumeMarkdown(
     if (trimmed.startsWith('### ')) {
       flushEntry();
       currentEntry = {
-        id: slugify(trimmed),
+        id: slugify(stripInlineMarkdown(trimmed)),
         ...parseHeadingLine(trimmed),
         bullets: [],
         lines: [],
@@ -127,8 +248,23 @@ export function parseLegacyResumeMarkdown(
       continue;
     }
 
+    if (sectionKind === 'education') {
+      const educationHeading = parseEducationHeadingLine(trimmed);
+      if (educationHeading) {
+        flushEntry();
+        currentEntry = {
+          id: slugify(educationHeading.heading),
+          heading: educationHeading.heading,
+          dateRange: educationHeading.dateRange,
+          bullets: [],
+          lines: [],
+        };
+        continue;
+      }
+    }
+
     if (trimmed.startsWith('- ')) {
-      const bullet = trimmed.replace(/^-\s*/, '').trim();
+      const bullet = stripInlineMarkdown(trimmed.replace(/^-\s*/, '').trim());
       if (!currentEntry) {
         currentEntry = {
           id: `${slugify(currentSectionTitle)}-entry-${currentEntries.length + 1}`,
@@ -149,11 +285,12 @@ export function parseLegacyResumeMarkdown(
       };
     }
 
+    const cleanLine = stripInlineMarkdown(trimmed);
     if (!currentEntry.dateRange && (sectionKind === 'experience' || sectionKind === 'projects' || sectionKind === 'leadership')) {
-      currentEntry.dateRange = trimmed;
+      currentEntry.dateRange = cleanLine;
     } else {
       currentEntry.lines ??= [];
-      currentEntry.lines.push(trimmed);
+      currentEntry.lines.push(cleanLine);
     }
   }
 
@@ -161,8 +298,12 @@ export function parseLegacyResumeMarkdown(
 
   return {
     meta: {
-      ...meta,
-      headerLines,
+      ...(displayName ? { displayName } : {}),
+      ...(meta?.lane ? { lane: meta.lane } : {}),
+      ...(meta?.source ? { source: meta.source } : {}),
+      ...(meta?.summary ? { summary: stripInlineMarkdown(meta.summary) } : {}),
+      ...(meta?.keywords ? { keywords: meta.keywords.map((keyword) => stripInlineMarkdown(keyword)) } : {}),
+      ...(headerLines.length > 0 ? { headerLines } : {}),
     },
     sections,
   };
@@ -181,19 +322,29 @@ function isResumeSection(value: unknown): value is ResumeSection {
 }
 
 export function coerceResumeDocument(value: unknown, fallbackMarkdown?: string): ResumeDocument {
+  const fallbackDocument = fallbackMarkdown ? parseLegacyResumeMarkdown(fallbackMarkdown) : null;
+
   if (value && typeof value === 'object') {
     const record = value as Record<string, unknown>;
     if (Array.isArray(record.sections) && record.sections.every(isResumeSection)) {
-      return record as ResumeDocument;
+      const structured = normalizeDocument(record as ResumeDocument);
+      if (!fallbackDocument) {
+        return structured;
+      }
+
+      const shouldPreferParsedFallback = !structured.meta?.displayName || documentHasMarkdownArtifacts(structured);
+      return shouldPreferParsedFallback
+        ? mergeDocuments(fallbackDocument, structured)
+        : mergeDocuments(structured, fallbackDocument);
     }
   }
 
-  return parseLegacyResumeMarkdown(fallbackMarkdown ?? '');
+  return fallbackDocument ?? parseLegacyResumeMarkdown('');
 }
 
 export function renderResumeDocument(title: string, document: ResumeDocument): string {
   const lines: string[] = [];
-  lines.push(`# ${title}`);
+  lines.push(`# ${document.meta?.displayName ?? title}`);
   lines.push('');
 
   for (const headerLine of document.meta?.headerLines ?? []) {
