@@ -8,7 +8,7 @@ import { renderResumePdf } from './pdf';
 const sampleDocument: ResumeDocument = {
   meta: {
     displayName: 'Benny Yuan',
-    headerLines: ['New York, NY · benny@example.com · (555) 555-5555'],
+    headerLines: ['(555) 555-5555 | benny@example.com | Available June 2026'],
     summary: 'Business-facing analyst with workflow analysis, KPI reporting, and stakeholder communication experience.',
   },
   sections: [
@@ -33,7 +33,7 @@ const sampleDocument: ResumeDocument = {
   ],
 };
 
-test('renderResumePdf returns PDF bytes with expected header/footer markers and resume content', () => {
+test('renderResumePdf returns PDF bytes with expected header/footer markers and template styling cues', () => {
   const pdf = renderResumePdf('Northstar Business Analyst Resume', sampleDocument);
   const text = pdf.toString('utf8');
 
@@ -44,4 +44,6 @@ test('renderResumePdf returns PDF bytes with expected header/footer markers and 
   assert.match(text, /benny@example.com/);
   assert.match(text, /EXPERIENCE/);
   assert.match(text, /Northstar/);
+  assert.doesNotMatch(text, /SUMMARY/);
+  assert.match(text, /0\.270 0\.670 0\.820 rg/);
 });

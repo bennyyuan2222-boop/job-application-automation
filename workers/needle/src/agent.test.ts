@@ -143,6 +143,8 @@ test('buildNeedlePromptForTest includes app context, candidate resumes, and cont
   assert.match(prompt, /Return ONLY valid JSON/);
   assert.match(prompt, /the first line must be Benny's actual name/);
   assert.match(prompt, /preserve section order: EDUCATION, SKILLS, EXPERIENCE, PROJECTS, LEADERSHIP & ACTIVITIES/);
+  assert.match(prompt, /do not add a SUMMARY section unless the user explicitly asks for one/);
+  assert.match(prompt, /AEBenny one-page serif resume layout/);
   assert.match(prompt, /about 18-21 bullets total/);
   assert.match(prompt, /Emphasize KPI reporting without inflating ownership\./);
 });
