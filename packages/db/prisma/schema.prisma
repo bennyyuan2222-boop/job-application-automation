@@ -401,6 +401,24 @@ model NeedleTask {
   @@index([resultTailoringRunId])
 }
 
+model NeedleWorkerHeartbeat {
+  workerLabel         String          @id
+  state               String
+  processId           Int?
+  hostname            String?
+  dbHost              String?
+  openclawBin         String?
+  currentTaskId       String?
+  currentTaskType     NeedleTaskType?
+  lastPolledAt        DateTime
+  lastClaimedTaskId   String?
+  lastCompletedTaskId String?
+  lastErrorCode       String?
+  lastErrorMessage    String?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+}
+
 model ApplicationAnswer {
   id            String            @id @default(cuid())
   applicationId String
