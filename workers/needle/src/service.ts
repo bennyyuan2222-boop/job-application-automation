@@ -14,16 +14,23 @@ import {
   type TailoringBaseSelectionRecord,
   type TailoringFitAssessment,
   type TailoringGenerationMetadata,
+  type TailoringQaMetadata,
   type TailoringRunStatus,
 } from '@job-ops/domain';
 import {
+  analyzeResumeDensity,
+  buildDensityBaselineProfile,
   buildResumeArtifactFilename,
   buildTailoredResumeDraft,
   chooseBestBaseResume,
   coerceResumeDocument,
   extractJobKeywords,
   renderResumeDocument,
+  renderResumePdfDetailed,
+  shouldRetryForDensity,
   type BaseResumeSelection,
+  type DensityAssessment,
+  type DensityBaselineProfile,
   type JobContext,
   type ResumeCandidate,
   type TailoredResumeDraft,
@@ -279,6 +286,170 @@ function toJsonValue(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
+const DENSITY_BASELINE_RESUME_VERSION_ID = process.env.NEEDLE_DENSITY_BASELINE_RESUME_VERSION_ID?.trim() || null;
+let densityBaselineCache: { resumeVersionId: string; profile: DensityBaselineProfile } | null = null;
+
+type GeneratedDraftCandidate = {
+  attemptIndex: number;
+  selectedBase: ResumeCandidate;
+  baseSelectionRecord: TailoringBaseSelectionRecord;
+  fitAssessment: TailoringFitAssessment;
+  rationale: string[];
+  risks: TailoredResumeDraft['risks'];
+  changeSummary: string[];
+  generatedTitle: string;
+  generatedMarkdown: string;
+  generatedDocument: ResumeCandidate['document'];
+  generationMetadata: TailoringGenerationMetadata;
+  densityAssessment: DensityAssessment | null;
+};
+
+function getDensityBaselineProfile(candidates: ResumeCandidate[]): DensityBaselineProfile | null {
+  if (!DENSITY_BASELINE_RESUME_VERSION_ID) {
+    return null;
+  }
+
+  if (densityBaselineCache?.resumeVersionId === DENSITY_BASELINE_RESUME_VERSION_ID) {
+    return densityBaselineCache.profile;
+  }
+
+  const baselineResume = candidates.find((candidate) => candidate.id === DENSITY_BASELINE_RESUME_VERSION_ID);
+  if (!baselineResume) {
+    return null;
+  }
+
+  try {
+    const baselineProfile = buildDensityBaselineProfile(
+      renderResumePdfDetailed(baselineResume.title, baselineResume.document).layoutMetrics,
+    );
+    densityBaselineCache = {
+      resumeVersionId: baselineResume.id,
+      profile: baselineProfile,
+    };
+    return baselineProfile;
+  } catch {
+    return null;
+  }
+}
+
+function assessCandidateDensity(
+  candidate: Omit<GeneratedDraftCandidate, 'densityAssessment'>,
+  baselineProfile: DensityBaselineProfile | null,
+): GeneratedDraftCandidate {
+  if (!baselineProfile) {
+    return {
+      ...candidate,
+      densityAssessment: null,
+    };
+  }
+
+  try {
+    const layoutMetrics = renderResumePdfDetailed(candidate.generatedTitle, candidate.generatedDocument).layoutMetrics;
+    return {
+      ...candidate,
+      densityAssessment: analyzeResumeDensity(layoutMetrics, baselineProfile),
+    };
+  } catch {
+    return {
+      ...candidate,
+      densityAssessment: null,
+    };
+  }
+}
+
+function getSupportingTruthSources(selectedBase: ResumeCandidate, candidates: ResumeCandidate[]) {
+  const selectedLane = selectedBase.document.meta?.lane?.trim().toLowerCase() || null;
+  if (!selectedLane) {
+    return [];
+  }
+
+  return candidates.filter(
+    (candidate) =>
+      candidate.id !== selectedBase.id &&
+      (candidate.document.meta?.lane?.trim().toLowerCase() || null) === selectedLane,
+  );
+}
+
+function fitVerdictRank(verdict: TailoringFitAssessment['verdict']) {
+  switch (verdict) {
+    case 'strong_match':
+      return 3;
+    case 'viable':
+      return 2;
+    case 'stretch':
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function riskSeverityScore(risks: TailoredResumeDraft['risks']) {
+  return risks.reduce((total, risk) => {
+    if (risk.severity === 'high') return total + 3;
+    if (risk.severity === 'medium') return total + 2;
+    return total + 1;
+  }, 0);
+}
+
+function fitDropIsMinor(base: GeneratedDraftCandidate, candidate: GeneratedDraftCandidate) {
+  return fitVerdictRank(base.fitAssessment.verdict) - fitVerdictRank(candidate.fitAssessment.verdict) <= 1;
+}
+
+function risksMateriallyWorsened(base: GeneratedDraftCandidate, candidate: GeneratedDraftCandidate) {
+  const highRiskDelta = candidate.risks.filter((risk) => risk.severity === 'high').length -
+    base.risks.filter((risk) => risk.severity === 'high').length;
+  if (highRiskDelta > 0) {
+    return true;
+  }
+
+  return riskSeverityScore(candidate.risks) - riskSeverityScore(base.risks) > 2;
+}
+
+function chooseBestDensityCandidate(candidates: GeneratedDraftCandidate[]): GeneratedDraftCandidate {
+  const [firstCandidate, ...rest] = candidates;
+  if (!firstCandidate) {
+    throw new Error('No generated candidates available for density selection');
+  }
+
+  let bestCandidate = firstCandidate;
+
+  for (const candidate of rest) {
+    const candidateScore = candidate.densityAssessment?.score ?? -1;
+    const bestScore = bestCandidate.densityAssessment?.score ?? -1;
+    if (candidateScore <= bestScore) {
+      continue;
+    }
+    if (!fitDropIsMinor(firstCandidate, candidate)) {
+      continue;
+    }
+    if (risksMateriallyWorsened(firstCandidate, candidate)) {
+      continue;
+    }
+    bestCandidate = candidate;
+  }
+
+  return bestCandidate;
+}
+
+function buildQaMetadata(args: {
+  attempts: number;
+  selectedAttemptIndex: number;
+  assessment: DensityAssessment | null;
+}): TailoringQaMetadata | null {
+  if (!args.assessment) {
+    return null;
+  }
+
+  return {
+    status: args.assessment.status === 'pass' ? 'pass' : 'accepted_with_warning',
+    attempts: args.attempts,
+    selectedAttemptIndex: args.selectedAttemptIndex,
+    densityScore: args.assessment.score,
+    reasons: args.assessment.reasons,
+    metricsSummary: args.assessment.summary,
+  };
+}
+
 export async function generateTailoringDraftForApplication(
   applicationId: string,
   options?: GenerateTailoringDraftOptions,
@@ -347,6 +518,9 @@ async function generateTailoringDraftForApplicationWithMode(
   let sessionKeyForUpdate: string | null = application.needleSessionKey ?? null;
 
   try {
+    const densityBaselineProfile = getDensityBaselineProfile(candidates);
+    const generatedCandidates: GeneratedDraftCandidate[] = [];
+    let qaMetadata: TailoringQaMetadata | null = null;
     let selectedBase = heuristicBase;
     let baseSelectionRecord = buildBaseSelectionRecord(heuristicSelection, heuristicBase, candidates.length);
     let fitAssessment: TailoringFitAssessment;
@@ -365,7 +539,7 @@ async function generateTailoringDraftForApplicationWithMode(
       });
       sessionKeyForUpdate = sessionKey;
 
-      const agentResult = await requestTailoringFromNeedleAgent({
+      const initialAgentResult = await requestTailoringFromNeedleAgent({
         sessionKey,
         applicationId: application.id,
         applicationStatus: application.status,
@@ -382,70 +556,197 @@ async function generateTailoringDraftForApplicationWithMode(
         },
       });
 
-      const agentSelectedBase = candidates.find(
-        (candidate) => candidate.id === agentResult.response.baseSelection.selectedResumeVersionId,
+      const initialSelectedBase = candidates.find(
+        (candidate) => candidate.id === initialAgentResult.response.baseSelection.selectedResumeVersionId,
       );
-      if (!agentSelectedBase) {
-        throw new Error(`Needle selected unknown base resume: ${agentResult.response.baseSelection.selectedResumeVersionId}`);
+      if (!initialSelectedBase) {
+        throw new Error(`Needle selected unknown base resume: ${initialAgentResult.response.baseSelection.selectedResumeVersionId}`);
       }
 
-      selectedBase = agentSelectedBase;
-      baseSelectionRecord = {
-        selectedResumeVersionId: agentSelectedBase.id,
+      const initialBaseSelectionRecord: TailoringBaseSelectionRecord = {
+        selectedResumeVersionId: initialSelectedBase.id,
         selectedResumeTitle:
-          agentResult.response.baseSelection.selectedResumeTitle.trim() || agentSelectedBase.title,
-        ...(agentResult.response.baseSelection.lane
-          ? { lane: agentResult.response.baseSelection.lane }
-          : agentSelectedBase.document.meta?.lane
-            ? { lane: agentSelectedBase.document.meta.lane }
+          initialAgentResult.response.baseSelection.selectedResumeTitle.trim() || initialSelectedBase.title,
+        ...(initialAgentResult.response.baseSelection.lane
+          ? { lane: initialAgentResult.response.baseSelection.lane }
+          : initialSelectedBase.document.meta?.lane
+            ? { lane: initialSelectedBase.document.meta.lane }
             : {}),
-        ...(typeof agentResult.response.baseSelection.score === 'number'
-          ? { score: agentResult.response.baseSelection.score }
+        ...(typeof initialAgentResult.response.baseSelection.score === 'number'
+          ? { score: initialAgentResult.response.baseSelection.score }
           : {}),
-        reasons: agentResult.response.baseSelection.reasons,
+        reasons: initialAgentResult.response.baseSelection.reasons,
         candidateCount: candidates.length,
       };
-      fitAssessment = agentResult.response.fitAssessment;
-      rationale = dedupeStrings([
-        ...agentResult.response.baseSelection.reasons,
-        ...agentResult.response.draft.rationale,
-      ]);
-      risks = agentResult.response.draft.risks;
-      changeSummary = agentResult.response.draft.changeSummary;
-      generatedTitle = agentResult.response.draft.title.trim() || `${jobContext.title} Resume`;
-      generatedMarkdown = agentResult.response.draft.contentMarkdown.trim();
-      if (!generatedMarkdown) {
+      const initialGeneratedMarkdown = initialAgentResult.response.draft.contentMarkdown.trim();
+      if (!initialGeneratedMarkdown) {
         throw new NeedleAgentError('needle_agent_empty_markdown', 'Needle returned an empty markdown draft', {
           sessionKey,
           applicationId: application.id,
         });
       }
-      generatedDocument = coerceResumeDocument(undefined, generatedMarkdown);
-      generationMetadata = buildAgentGenerationMetadata({
-        strategyVersion: agentResult.response.generation.strategyVersion,
-        promptVersion: agentResult.response.generation.promptVersion ?? undefined,
-        modelId: agentResult.response.generation.modelId ?? undefined,
-        provider: agentResult.response.generation.provider ?? 'openclaw',
-        latencyMs: Date.now() - startedAt,
-        sessionKey,
-        sourceTailoringRunId: options?.sourceTailoringRunId,
-      });
+
+      const initialCandidate = assessCandidateDensity(
+        {
+          attemptIndex: 0,
+          selectedBase: initialSelectedBase,
+          baseSelectionRecord: initialBaseSelectionRecord,
+          fitAssessment: initialAgentResult.response.fitAssessment,
+          rationale: dedupeStrings([
+            ...initialAgentResult.response.baseSelection.reasons,
+            ...initialAgentResult.response.draft.rationale,
+          ]),
+          risks: initialAgentResult.response.draft.risks,
+          changeSummary: initialAgentResult.response.draft.changeSummary,
+          generatedTitle: initialAgentResult.response.draft.title.trim() || `${jobContext.title} Resume`,
+          generatedMarkdown: initialGeneratedMarkdown,
+          generatedDocument: coerceResumeDocument(undefined, initialGeneratedMarkdown),
+          generationMetadata: buildAgentGenerationMetadata({
+            strategyVersion: initialAgentResult.response.generation.strategyVersion,
+            promptVersion: initialAgentResult.response.generation.promptVersion ?? undefined,
+            modelId: initialAgentResult.response.generation.modelId ?? undefined,
+            provider: initialAgentResult.response.generation.provider ?? 'openclaw',
+            latencyMs: Date.now() - startedAt,
+            sessionKey,
+            sourceTailoringRunId: options?.sourceTailoringRunId,
+          }),
+        },
+        densityBaselineProfile,
+      );
+      generatedCandidates.push(initialCandidate);
+
+      if (initialCandidate.densityAssessment && shouldRetryForDensity(initialCandidate.densityAssessment)) {
+        const supportingTruthSources = getSupportingTruthSources(initialSelectedBase, candidates);
+        const retryAgentResult = await requestTailoringFromNeedleAgent({
+          sessionKey,
+          applicationId: application.id,
+          applicationStatus: application.status,
+          job: jobContext,
+          instructions: options?.instructions,
+          sourceTailoringRunId: options?.sourceTailoringRunId ?? null,
+          priorRuns: mapPriorRunsForNeedle(application),
+          baseResumeCandidates: [initialSelectedBase],
+          supportingTruthSources,
+          provisionalBaseHint: {
+            selectedResumeVersionId: initialSelectedBase.id,
+            selectedResumeTitle: initialBaseSelectionRecord.selectedResumeTitle,
+            reasons: initialBaseSelectionRecord.reasons,
+            lane: initialBaseSelectionRecord.lane ?? null,
+          },
+          densityRevision: {
+            previousDraftMarkdown: initialCandidate.generatedMarkdown,
+            lockedBaseSelection: {
+              selectedResumeVersionId: initialSelectedBase.id,
+              selectedResumeTitle: initialBaseSelectionRecord.selectedResumeTitle,
+              lane: initialBaseSelectionRecord.lane ?? null,
+            },
+            assessment: initialCandidate.densityAssessment,
+          },
+        });
+
+        const retrySelectedBase = candidates.find(
+          (candidate) => candidate.id === retryAgentResult.response.baseSelection.selectedResumeVersionId,
+        );
+        if (!retrySelectedBase) {
+          throw new Error(`Needle selected unknown retry base resume: ${retryAgentResult.response.baseSelection.selectedResumeVersionId}`);
+        }
+
+        const retryGeneratedMarkdown = retryAgentResult.response.draft.contentMarkdown.trim();
+        if (!retryGeneratedMarkdown) {
+          throw new NeedleAgentError('needle_agent_empty_markdown', 'Needle returned an empty markdown draft on density retry', {
+            sessionKey,
+            applicationId: application.id,
+          });
+        }
+
+        generatedCandidates.push(
+          assessCandidateDensity(
+            {
+              attemptIndex: 1,
+              selectedBase: retrySelectedBase,
+              baseSelectionRecord: {
+                selectedResumeVersionId: retrySelectedBase.id,
+                selectedResumeTitle:
+                  retryAgentResult.response.baseSelection.selectedResumeTitle.trim() || retrySelectedBase.title,
+                ...(retryAgentResult.response.baseSelection.lane
+                  ? { lane: retryAgentResult.response.baseSelection.lane }
+                  : retrySelectedBase.document.meta?.lane
+                    ? { lane: retrySelectedBase.document.meta.lane }
+                    : {}),
+                ...(typeof retryAgentResult.response.baseSelection.score === 'number'
+                  ? { score: retryAgentResult.response.baseSelection.score }
+                  : {}),
+                reasons: retryAgentResult.response.baseSelection.reasons,
+                candidateCount: 1,
+              },
+              fitAssessment: retryAgentResult.response.fitAssessment,
+              rationale: dedupeStrings([
+                ...retryAgentResult.response.baseSelection.reasons,
+                ...retryAgentResult.response.draft.rationale,
+              ]),
+              risks: retryAgentResult.response.draft.risks,
+              changeSummary: retryAgentResult.response.draft.changeSummary,
+              generatedTitle: retryAgentResult.response.draft.title.trim() || `${jobContext.title} Resume`,
+              generatedMarkdown: retryGeneratedMarkdown,
+              generatedDocument: coerceResumeDocument(undefined, retryGeneratedMarkdown),
+              generationMetadata: buildAgentGenerationMetadata({
+                strategyVersion: retryAgentResult.response.generation.strategyVersion,
+                promptVersion: retryAgentResult.response.generation.promptVersion ?? undefined,
+                modelId: retryAgentResult.response.generation.modelId ?? undefined,
+                provider: retryAgentResult.response.generation.provider ?? 'openclaw',
+                latencyMs: Date.now() - startedAt,
+                sessionKey,
+                sourceTailoringRunId: options?.sourceTailoringRunId,
+              }),
+            },
+            densityBaselineProfile,
+          ),
+        );
+      }
     } else {
       const draft = buildTailoredResumeDraft(jobContext, heuristicBase);
       draft.contentMarkdown = renderResumeDocument(draft.title, draft.document);
-      fitAssessment = buildFitAssessment(jobContext, draft);
-      rationale = [...heuristicSelection.reasons, ...draft.rationale];
-      risks = draft.risks;
-      changeSummary = draft.changeSummary;
-      generatedTitle = draft.title;
-      generatedMarkdown = draft.contentMarkdown;
-      generatedDocument = draft.document;
-      generationMetadata = buildHeuristicGenerationMetadata(
-        application,
-        Date.now() - startedAt,
-        options?.sourceTailoringRunId,
+      generatedCandidates.push(
+        assessCandidateDensity(
+          {
+            attemptIndex: 0,
+            selectedBase: heuristicBase,
+            baseSelectionRecord: heuristicBaseSelectionRecord,
+            fitAssessment: buildFitAssessment(jobContext, draft),
+            rationale: [...heuristicSelection.reasons, ...draft.rationale],
+            risks: draft.risks,
+            changeSummary: draft.changeSummary,
+            generatedTitle: draft.title,
+            generatedMarkdown: draft.contentMarkdown,
+            generatedDocument: draft.document,
+            generationMetadata: buildHeuristicGenerationMetadata(
+              application,
+              Date.now() - startedAt,
+              options?.sourceTailoringRunId,
+            ),
+          },
+          densityBaselineProfile,
+        ),
       );
     }
+
+    const selectedCandidate = chooseBestDensityCandidate(generatedCandidates);
+    qaMetadata = buildQaMetadata({
+      attempts: generatedCandidates.length,
+      selectedAttemptIndex: selectedCandidate.attemptIndex,
+      assessment: selectedCandidate.densityAssessment,
+    });
+
+    selectedBase = selectedCandidate.selectedBase;
+    baseSelectionRecord = selectedCandidate.baseSelectionRecord;
+    fitAssessment = selectedCandidate.fitAssessment;
+    rationale = selectedCandidate.rationale;
+    risks = selectedCandidate.risks;
+    changeSummary = selectedCandidate.changeSummary;
+    generatedTitle = selectedCandidate.generatedTitle;
+    generatedMarkdown = selectedCandidate.generatedMarkdown;
+    generatedDocument = selectedCandidate.generatedDocument;
+    generationMetadata = selectedCandidate.generationMetadata;
 
     const resultingApplicationStatus = shouldMoveToReview
       ? ApplicationStatus.tailoring_review
@@ -497,6 +798,7 @@ async function generateTailoringDraftForApplicationWithMode(
           risksJson: risks,
           changeSummaryJson: changeSummary,
           generationMetadataJson: generationMetadata,
+          qaMetadataJson: qaMetadata ? toJsonValue(qaMetadata) : Prisma.JsonNull,
           failureCode: null,
           failureMessage: null,
           completedAt: new Date(),
@@ -541,6 +843,7 @@ async function generateTailoringDraftForApplicationWithMode(
             changeSummary,
             risks,
             generationMetadata,
+            qaMetadata,
             mode: generationMode,
           },
         }),

@@ -65,6 +65,9 @@ export type TailoringProceedRecommendation = (typeof TAILORING_PROCEED_RECOMMEND
 export const TAILORING_GENERATION_MODES = ['heuristic', 'agent', 'hybrid'] as const;
 export type TailoringGenerationMode = (typeof TAILORING_GENERATION_MODES)[number];
 
+export const TAILORING_QA_STATUSES = ['pass', 'accepted_with_warning'] as const;
+export type TailoringQaStatus = (typeof TAILORING_QA_STATUSES)[number];
+
 export const RESUME_SECTION_KINDS = [
   'summary',
   'education',
@@ -141,4 +144,20 @@ export type TailoringGenerationMetadata = {
   totalTokens?: number | null;
   sessionKey?: string | null;
   sourceTailoringRunId?: string | null;
+};
+
+export type TailoringQaMetadata = {
+  status: TailoringQaStatus;
+  attempts: number;
+  selectedAttemptIndex: number;
+  densityScore: number;
+  reasons: string[];
+  metricsSummary: {
+    bottomWhitespacePts: number;
+    bottomWhitespaceRatio: number;
+    oneLineBulletRatio: number;
+    skillsRenderedLines: number;
+    finalSectionRenderedLines: number;
+    totalRenderedLines: number;
+  };
 };

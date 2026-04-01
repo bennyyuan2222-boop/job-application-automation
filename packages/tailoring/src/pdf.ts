@@ -1,8 +1,16 @@
-import type { ResumeDocument, ResumeEntry, ResumeSection } from '@job-ops/domain';
+import type { ResumeDocument, ResumeEntry, ResumeSection, ResumeSectionKind } from '@job-ops/domain';
 
 type PdfFont = 'regular' | 'bold' | 'italic';
 type TextAlign = 'left' | 'center' | 'right';
 type PdfColor = readonly [number, number, number];
+
+type LayoutMeta = {
+  sectionName?: string;
+  sectionKind?: ResumeSectionKind;
+  lineRole?: 'display_name' | 'header_line' | 'section_header' | 'entry_heading' | 'entry_line' | 'bullet' | 'spacer';
+  bulletLineCount?: number;
+  bulletCharCount?: number;
+};
 
 type BulletMarker = {
   kind: 'bullet';
@@ -22,6 +30,7 @@ type TextItem = {
   spacingBefore: number;
   spacingAfter: number;
   marker?: BulletMarker;
+  meta?: LayoutMeta;
 };
 
 type RowItem = {
@@ -35,6 +44,7 @@ type RowItem = {
   size: number;
   spacingBefore: number;
   spacingAfter: number;
+  meta?: LayoutMeta;
 };
 
 type RuleItem = {
@@ -56,6 +66,7 @@ type SectionHeaderItem = {
   thickness: number;
   spacingBefore: number;
   spacingAfter: number;
+  meta?: LayoutMeta;
 };
 
 type InlineSegment = {
@@ -71,9 +82,39 @@ type SegmentsRowItem = {
   align: TextAlign;
   spacingBefore: number;
   spacingAfter: number;
+  meta?: LayoutMeta;
 };
 
 type LayoutItem = TextItem | RowItem | RuleItem | SectionHeaderItem | SegmentsRowItem;
+
+export type SectionLayoutMetric = {
+  sectionName: string;
+  sectionKind: ResumeSectionKind;
+  renderedLines: number;
+  bulletCount: number;
+  bulletLineCount: number;
+  oneLineBulletCount: number;
+  averageBulletChars: number;
+};
+
+export type ResumeLayoutMetrics = {
+  pageHeightPts: number;
+  pageWidthPts: number;
+  topMarginPts: number;
+  bottomMarginPts: number;
+  pageCount: number;
+  overflowed: boolean;
+  bottomWhitespacePts: number;
+  bottomWhitespaceRatio: number;
+  totalRenderedLines: number;
+  oneLineBulletRatio: number;
+  sectionMetrics: SectionLayoutMetric[];
+};
+
+export type RenderResumePdfDetailedResult = {
+  pdfBuffer: Buffer;
+  layoutMetrics: ResumeLayoutMetrics;
+};
 
 const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;
@@ -202,6 +243,7 @@ function pushWrappedText(
     color?: PdfColor;
     spacingBefore?: number;
     spacingAfter?: number;
+    meta?: LayoutMeta;
   },
 ) {
   const indent = options?.indent ?? 0;
@@ -209,6 +251,7 @@ function pushWrappedText(
   const color = options?.color ?? BLACK;
   const spacingBefore = options?.spacingBefore ?? 0;
   const spacingAfter = options?.spacingAfter ?? 0;
+  const meta = options?.meta;
   const wrapped = wrapText(text, size, font, CONTENT_WIDTH - indent);
 
   wrapped.forEach((line, index) => {
@@ -222,6 +265,7 @@ function pushWrappedText(
       color,
       spacingBefore: index === 0 ? spacingBefore : 0,
       spacingAfter: index === wrapped.length - 1 ? spacingAfter : 0,
+      ...(meta ? { meta } : {}),
     });
   });
 }
@@ -229,7 +273,7 @@ function pushWrappedText(
 function pushBulletParagraph(
   target: LayoutItem[],
   text: string,
-  options?: { size?: number; font?: PdfFont; color?: PdfColor; spacingBefore?: number; spacingAfter?: number },
+  options?: { size?: number; font?: PdfFont; color?: PdfColor; spacingBefore?: number; spacingAfter?: number; meta?: LayoutMeta },
 ) {
   const size = options?.size ?? 9.2;
   const font = options?.font ?? 'regular';
@@ -238,6 +282,8 @@ function pushBulletParagraph(
   const spacingAfter = options?.spacingAfter ?? 0;
   const indent = BULLET_TEXT_INDENT;
   const wrapped = wrapText(text, size, font, CONTENT_WIDTH - indent);
+  const bulletText = normalizeText(text);
+  const meta = options?.meta;
 
   wrapped.forEach((line, index) => {
     target.push({
@@ -257,6 +303,20 @@ function pushBulletParagraph(
               x: BULLET_MARKER_X,
               radius: BULLET_RADIUS,
               color,
+            },
+          }
+        : {}),
+      ...(meta || wrapped.length > 0
+        ? {
+            meta: {
+              ...(meta ?? {}),
+              lineRole: 'bullet',
+              ...(index === 0
+                ? {
+                    bulletLineCount: wrapped.length,
+                    bulletCharCount: bulletText.length,
+                  }
+                : {}),
             },
           }
         : {}),
@@ -349,6 +409,7 @@ function buildLayout(title: string, document: ResumeDocument): LayoutItem[] {
     align: 'center',
     color: BLUE,
     spacingAfter: 1.5,
+    meta: { lineRole: 'display_name' },
   });
 
   for (const headerLine of headerLines) {
@@ -359,6 +420,7 @@ function buildLayout(title: string, document: ResumeDocument): LayoutItem[] {
       align: 'center',
       spacingBefore: 0,
       spacingAfter: 0,
+      meta: { lineRole: 'header_line' },
     });
   }
 
@@ -371,6 +433,11 @@ function buildLayout(title: string, document: ResumeDocument): LayoutItem[] {
   });
 
   sections.forEach((section, sectionIndex) => {
+    const sectionMeta: LayoutMeta = {
+      sectionName: normalizeText(section.title).toUpperCase(),
+      sectionKind: section.kind,
+    };
+
     items.push({
       kind: 'sectionHeader',
       title: normalizeText(section.title).toUpperCase(),
@@ -380,6 +447,10 @@ function buildLayout(title: string, document: ResumeDocument): LayoutItem[] {
       thickness: 0.55,
       spacingBefore: sectionIndex === 0 ? 0 : 3,
       spacingAfter: 3.6,
+      meta: {
+        ...sectionMeta,
+        lineRole: 'section_header',
+      },
     });
 
     for (const entry of section.entries) {
@@ -400,36 +471,66 @@ function buildLayout(title: string, document: ResumeDocument): LayoutItem[] {
             size: 10.35,
             spacingBefore: 0.8,
             spacingAfter: 0,
+            meta: {
+              ...sectionMeta,
+              lineRole: 'entry_heading',
+            },
           });
         } else {
           pushWrappedText(items, heading, 'bold', 10.35, {
             spacingBefore: 0.8,
             spacingAfter: 0,
+            meta: {
+              ...sectionMeta,
+              lineRole: 'entry_heading',
+            },
           });
           pushWrappedText(items, dateRange, 'italic', 10, {
             align: 'right',
             spacingAfter: 0,
+            meta: {
+              ...sectionMeta,
+              lineRole: 'entry_heading',
+            },
           });
         }
       } else if (heading) {
         pushWrappedText(items, heading, 'bold', 10.35, {
           spacingBefore: 0.8,
           spacingAfter: 0,
+          meta: {
+            ...sectionMeta,
+            lineRole: 'entry_heading',
+          },
         });
       } else if (dateRange) {
         pushWrappedText(items, dateRange, 'italic', 10, {
           align: 'right',
           spacingBefore: 0.8,
           spacingAfter: 0,
+          meta: {
+            ...sectionMeta,
+            lineRole: 'entry_heading',
+          },
         });
       }
 
       for (const line of entry.lines ?? []) {
-        pushWrappedText(items, line, 'regular', 9.6, { spacingAfter: 0 });
+        pushWrappedText(items, line, 'regular', 9.6, {
+          spacingAfter: 0,
+          meta: {
+            ...sectionMeta,
+            lineRole: 'entry_line',
+          },
+        });
       }
 
       for (const bullet of entry.bullets ?? []) {
-        pushBulletParagraph(items, bullet, { size: 9.25, spacingAfter: 0 });
+        pushBulletParagraph(items, bullet, {
+          size: 9.25,
+          spacingAfter: 0,
+          meta: sectionMeta,
+        });
       }
 
       items.push({
@@ -442,6 +543,10 @@ function buildLayout(title: string, document: ResumeDocument): LayoutItem[] {
         color: BLACK,
         spacingBefore: 0,
         spacingAfter: 1.2,
+        meta: {
+          ...sectionMeta,
+          lineRole: 'spacer',
+        },
       });
     }
   });
@@ -597,8 +702,109 @@ function pageContentStream(items: LayoutItem[]): string {
   return commands.join('\n');
 }
 
-export function renderResumePdf(title: string, document: ResumeDocument): Buffer {
-  const pages = paginate(buildLayout(title, document));
+function getItemMeta(item: LayoutItem): LayoutMeta | undefined {
+  if (item.kind === 'rule') {
+    return undefined;
+  }
+
+  return item.meta;
+}
+
+function isRenderableLineItem(item: LayoutItem) {
+  return item.kind === 'sectionHeader' || item.kind === 'segments' || item.kind === 'row' || (item.kind === 'text' && item.text.length > 0);
+}
+
+function buildLayoutMetrics(pages: LayoutItem[][]): ResumeLayoutMetrics {
+  const sectionMetrics = new Map<string, SectionLayoutMetric>();
+  const sectionOrder: string[] = [];
+  let totalRenderedLines = 0;
+  let totalBullets = 0;
+  let oneLineBullets = 0;
+  let finalY = PAGE_HEIGHT - MARGIN_TOP;
+
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+    const pageItems = pages[pageIndex]!;
+    let currentY = PAGE_HEIGHT - MARGIN_TOP;
+
+    for (const item of pageItems) {
+      currentY -= item.spacingBefore;
+      const drawHeight = itemHeight(item);
+      const meta = getItemMeta(item);
+      const isLine = isRenderableLineItem(item);
+
+      if (isLine) {
+        totalRenderedLines += 1;
+      }
+
+      if (meta?.sectionName && meta.sectionKind && isLine) {
+        if (!sectionMetrics.has(meta.sectionName)) {
+          sectionOrder.push(meta.sectionName);
+          sectionMetrics.set(meta.sectionName, {
+            sectionName: meta.sectionName,
+            sectionKind: meta.sectionKind,
+            renderedLines: 0,
+            bulletCount: 0,
+            bulletLineCount: 0,
+            oneLineBulletCount: 0,
+            averageBulletChars: 0,
+          });
+        }
+
+        const metric = sectionMetrics.get(meta.sectionName)!;
+        metric.renderedLines += 1;
+
+        if (meta.lineRole === 'bullet') {
+          metric.bulletLineCount += 1;
+        }
+
+        if (typeof meta.bulletLineCount === 'number' && meta.bulletLineCount > 0) {
+          metric.bulletCount += 1;
+          totalBullets += 1;
+          if (meta.bulletLineCount === 1) {
+            metric.oneLineBulletCount += 1;
+            oneLineBullets += 1;
+          }
+          const nextTotalChars = metric.averageBulletChars * (metric.bulletCount - 1) + (meta.bulletCharCount ?? 0);
+          metric.averageBulletChars = nextTotalChars / metric.bulletCount;
+        }
+      }
+
+      currentY -= drawHeight;
+      currentY -= item.spacingAfter;
+    }
+
+    if (pageIndex === pages.length - 1) {
+      finalY = currentY;
+    }
+  }
+
+  const resolvedSectionMetrics = sectionOrder.map((name) => {
+    const metric = sectionMetrics.get(name)!;
+    return {
+      ...metric,
+      averageBulletChars: Math.round(metric.averageBulletChars * 10) / 10,
+    };
+  });
+
+  const usableHeight = PAGE_HEIGHT - MARGIN_TOP - MARGIN_BOTTOM;
+  const bottomWhitespacePts = Math.max(0, finalY - MARGIN_BOTTOM);
+
+  return {
+    pageHeightPts: PAGE_HEIGHT,
+    pageWidthPts: PAGE_WIDTH,
+    topMarginPts: MARGIN_TOP,
+    bottomMarginPts: MARGIN_BOTTOM,
+    pageCount: pages.length,
+    overflowed: pages.length > 1,
+    bottomWhitespacePts,
+    bottomWhitespaceRatio: usableHeight > 0 ? bottomWhitespacePts / usableHeight : 0,
+    totalRenderedLines,
+    oneLineBulletRatio: totalBullets > 0 ? oneLineBullets / totalBullets : 0,
+    sectionMetrics: resolvedSectionMetrics,
+  };
+}
+
+function buildPdfFromPages(pages: LayoutItem[][]): Buffer {
   const objects: string[] = [];
 
   const catalogId = 1;
@@ -650,4 +856,16 @@ export function renderResumePdf(title: string, document: ResumeDocument): Buffer
 
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
   return Buffer.from(pdf, 'utf8');
+}
+
+export function renderResumePdfDetailed(title: string, document: ResumeDocument): RenderResumePdfDetailedResult {
+  const pages = paginate(buildLayout(title, document));
+  return {
+    pdfBuffer: buildPdfFromPages(pages),
+    layoutMetrics: buildLayoutMetrics(pages),
+  };
+}
+
+export function renderResumePdf(title: string, document: ResumeDocument): Buffer {
+  return renderResumePdfDetailed(title, document).pdfBuffer;
 }

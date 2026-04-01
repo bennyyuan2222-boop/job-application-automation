@@ -83,6 +83,24 @@ export default async function TailoringPage() {
                         <span className="muted small">No approved tailored resume yet.</span>
                       )}
                     </div>
+                    <div className="info-block">
+                      <span className="eyebrow">Density QA</span>
+                      {item.latestRun?.qaMetadata ? (
+                        <>
+                          <strong>
+                            {item.latestRun.qaMetadata.status} · {item.latestRun.qaMetadata.densityScore}
+                          </strong>
+                          <span className="muted small">
+                            attempts {item.latestRun.qaMetadata.attempts}
+                            {item.latestRun.qaMetadata.reasons[0]
+                              ? ` · ${item.latestRun.qaMetadata.reasons[0]}`
+                              : ''}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="muted small">No density QA recorded.</span>
+                      )}
+                    </div>
                   </div>
                 </div>
 

@@ -204,6 +204,7 @@ export default async function TailoringDetailPage({
       (reviewedRun.fitAssessment ||
         reviewedRun.generationMetadata ||
         reviewedRun.baseSelection ||
+        reviewedRun.qaMetadata ||
         reviewedRun.failureCode) ? (
         <section className="grid-two">
           <div className="panel">
@@ -290,6 +291,56 @@ export default async function TailoringDetailPage({
                 </ul>
               </>
             ) : null}
+            {reviewedRun.qaMetadata ? (
+              <>
+                <h3>Density QA</h3>
+                <ul className="simple-list compact-list">
+                  <li>
+                    <strong>Status</strong> — {reviewedRun.qaMetadata.status}
+                  </li>
+                  <li>
+                    <strong>Score</strong> — {reviewedRun.qaMetadata.densityScore}
+                  </li>
+                  <li>
+                    <strong>Attempts</strong> — {reviewedRun.qaMetadata.attempts}
+                  </li>
+                  <li>
+                    <strong>Selected attempt</strong> — {reviewedRun.qaMetadata.selectedAttemptIndex}
+                  </li>
+                </ul>
+                {reviewedRun.qaMetadata.reasons.length ? (
+                  <>
+                    <h3>QA reasons</h3>
+                    <ul className="simple-list compact-list">
+                      {reviewedRun.qaMetadata.reasons.map((reason) => (
+                        <li key={reason}>{reason}</li>
+                      ))}
+                    </ul>
+                  </>
+                ) : null}
+                <h3>QA metrics</h3>
+                <ul className="simple-list compact-list">
+                  <li>
+                    <strong>Bottom whitespace</strong> — {reviewedRun.qaMetadata.metricsSummary.bottomWhitespacePts} pt
+                  </li>
+                  <li>
+                    <strong>Bottom whitespace ratio</strong> — {reviewedRun.qaMetadata.metricsSummary.bottomWhitespaceRatio}
+                  </li>
+                  <li>
+                    <strong>One-line bullet ratio</strong> — {reviewedRun.qaMetadata.metricsSummary.oneLineBulletRatio}
+                  </li>
+                  <li>
+                    <strong>Skills rendered lines</strong> — {reviewedRun.qaMetadata.metricsSummary.skillsRenderedLines}
+                  </li>
+                  <li>
+                    <strong>Final section rendered lines</strong> — {reviewedRun.qaMetadata.metricsSummary.finalSectionRenderedLines}
+                  </li>
+                  <li>
+                    <strong>Total rendered lines</strong> — {reviewedRun.qaMetadata.metricsSummary.totalRenderedLines}
+                  </li>
+                </ul>
+              </>
+            ) : null}
           </div>
         </section>
       ) : null}
@@ -370,6 +421,12 @@ export default async function TailoringDetailPage({
                   </div>
                   {run.revisionNote ? <div className="muted small">Revision note: {run.revisionNote}</div> : null}
                   {run.changeSummary[0] ? <div className="muted small">{run.changeSummary[0]}</div> : null}
+                  {run.qaMetadata ? (
+                    <div className="muted small">
+                      density QA: {run.qaMetadata.status} · score {run.qaMetadata.densityScore} · attempts {run.qaMetadata.attempts}
+                      {run.qaMetadata.reasons[0] ? ` · ${run.qaMetadata.reasons[0]}` : ''}
+                    </div>
+                  ) : null}
                   {run.failureCode ? (
                     <div className="muted small">
                       failure: {run.failureCode}

@@ -148,3 +148,57 @@ test('buildNeedlePromptForTest includes app context, candidate resumes, and cont
   assert.match(prompt, /about 18-21 bullets total/);
   assert.match(prompt, /Emphasize KPI reporting without inflating ownership\./);
 });
+
+test('buildNeedlePromptForTest includes density revision constraints when requested', () => {
+  const prompt = buildNeedlePromptForTest({
+    applicationId: 'application-123',
+    applicationStatus: 'tailoring',
+    job: {
+      id: 'job-1',
+      title: 'Business Analyst',
+      companyName: 'Northstar',
+      locationText: 'New York, NY',
+      description: 'Analyze workflows and report KPIs.',
+      requirements: {
+        mustHave: ['Workflow analysis'],
+      },
+    },
+    priorRuns: [],
+    baseResumeCandidates: [candidates[0]!],
+    supportingTruthSources: [
+      {
+        ...candidates[0]!,
+        id: 'resume-base-business-analyst-2',
+        title: 'Business Analyst Support Resume',
+      },
+    ],
+    densityRevision: {
+      previousDraftMarkdown: '# Benny Yuan\nContact line\n\n## EXPERIENCE\n- Short bullet',
+      lockedBaseSelection: {
+        selectedResumeVersionId: candidates[0]!.id,
+        selectedResumeTitle: candidates[0]!.title,
+        lane: 'business_analyst',
+      },
+      assessment: {
+        status: 'underfilled',
+        score: 58,
+        reasons: ['Bottom whitespace is too high.'],
+        machineFeedback: ['Expand short bullets with supported detail instead of adding filler.'],
+        summary: {
+          bottomWhitespacePts: 96,
+          bottomWhitespaceRatio: 0.14,
+          oneLineBulletRatio: 0.67,
+          skillsRenderedLines: 4,
+          finalSectionRenderedLines: 3,
+          totalRenderedLines: 28,
+        },
+      },
+    },
+  });
+
+  assert.match(prompt, /Density revision mode:/);
+  assert.match(prompt, /base selection is LOCKED/);
+  assert.match(prompt, /Supporting truth sources/);
+  assert.match(prompt, /Renderer density assessment/);
+  assert.match(prompt, /previous draft markdown/i);
+});

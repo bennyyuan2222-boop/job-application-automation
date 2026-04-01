@@ -362,6 +362,7 @@ model TailoringRun {
   risksJson              Json?
   changeSummaryJson      Json?
   generationMetadataJson Json?
+  qaMetadataJson         Json?
   failureCode            String?
   failureMessage         String?
   failureDetailsJson     Json?

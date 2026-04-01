@@ -9,6 +9,7 @@ import {
   tailoringDetailSchema,
   tailoringFitAssessmentSchema,
   tailoringGenerationMetadataSchema,
+  tailoringQaMetadataSchema,
   tailoringQueueItemSchema,
   tailoringRunSummarySchema,
   tailoringRunWorkspaceItemSchema,
@@ -104,6 +105,11 @@ function asGenerationMetadata(value: unknown) {
   return parsed.success ? parsed.data : null;
 }
 
+function asQaMetadata(value: unknown) {
+  const parsed = tailoringQaMetadataSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 function mapResumeVersionDetail(resume: {
   id: string;
   kind: string;
@@ -138,6 +144,7 @@ function mapTailoringRunSummary(run: {
   changeSummaryJson: unknown;
   risksJson: unknown;
   generationMetadataJson: unknown;
+  qaMetadataJson: unknown;
   failureCode: string | null;
   failureMessage: string | null;
   outputResumeVersionId: string | null;
@@ -156,6 +163,7 @@ function mapTailoringRunSummary(run: {
     fitAssessment: asFitAssessment(run.fitAssessmentJson),
     baseSelection: asBaseSelection(run.baseSelectionJson),
     generationMetadata: asGenerationMetadata(run.generationMetadataJson),
+    qaMetadata: asQaMetadata(run.qaMetadataJson),
     failureCode: run.failureCode,
     failureMessage: run.failureMessage,
     outputResumeVersionId: run.outputResumeVersionId,
@@ -176,6 +184,7 @@ function mapTailoringRunWorkspaceItem(run: {
   changeSummaryJson: unknown;
   risksJson: unknown;
   generationMetadataJson: unknown;
+  qaMetadataJson: unknown;
   failureCode: string | null;
   failureMessage: string | null;
   outputResumeVersionId: string | null;

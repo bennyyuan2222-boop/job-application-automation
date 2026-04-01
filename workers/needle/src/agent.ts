@@ -9,7 +9,7 @@ import {
   type TailoringFitAssessment,
   type TailoringRisk,
 } from '@job-ops/contracts';
-import type { JobContext, ResumeCandidate } from '@job-ops/tailoring';
+import type { DensityAssessment, JobContext, ResumeCandidate } from '@job-ops/tailoring';
 
 const execFile = promisify(execFileCallback);
 
@@ -90,11 +90,21 @@ export async function requestTailoringFromNeedleAgent(args: {
   sourceTailoringRunId?: string | null;
   priorRuns: NeedlePriorRunContext[];
   baseResumeCandidates: ResumeCandidate[];
+  supportingTruthSources?: ResumeCandidate[];
   provisionalBaseHint?: {
     selectedResumeVersionId: string;
     selectedResumeTitle: string;
     reasons: string[];
     lane?: string | null;
+  } | null;
+  densityRevision?: {
+    previousDraftMarkdown: string;
+    lockedBaseSelection: {
+      selectedResumeVersionId: string;
+      selectedResumeTitle: string;
+      lane?: string | null;
+    };
+    assessment: DensityAssessment;
   } | null;
   timeoutSeconds?: number;
 }) {
@@ -182,14 +192,32 @@ export function buildNeedlePromptForTest(args: {
   sourceTailoringRunId?: string | null;
   priorRuns: NeedlePriorRunContext[];
   baseResumeCandidates: ResumeCandidate[];
+  supportingTruthSources?: ResumeCandidate[];
   provisionalBaseHint?: {
     selectedResumeVersionId: string;
     selectedResumeTitle: string;
     reasons: string[];
     lane?: string | null;
   } | null;
+  densityRevision?: {
+    previousDraftMarkdown: string;
+    lockedBaseSelection: {
+      selectedResumeVersionId: string;
+      selectedResumeTitle: string;
+      lane?: string | null;
+    };
+    assessment: DensityAssessment;
+  } | null;
 }) {
   const candidatePayload = args.baseResumeCandidates.map((candidate) => ({
+    id: candidate.id,
+    title: candidate.title,
+    lane: candidate.document.meta?.lane ?? null,
+    summary: candidate.document.meta?.summary ?? null,
+    contentMarkdown: candidate.contentMarkdown,
+  }));
+
+  const supportingTruthPayload = (args.supportingTruthSources ?? []).map((candidate) => ({
     id: candidate.id,
     title: candidate.title,
     lane: candidate.document.meta?.lane ?? null,
@@ -215,6 +243,22 @@ export function buildNeedlePromptForTest(args: {
     outputResumeMarkdown: run.outputResumeMarkdown ?? null,
   }));
 
+  const densityRevisionSection = args.densityRevision
+    ? [
+        '',
+        'Density revision mode:',
+        '- this is a revision request for rendered resume density, not a fresh base-selection task',
+        '- base selection is LOCKED; do not switch away from the locked selectedResumeVersionId',
+        '- preserve required sections and parseable markdown structure',
+        '- do not add a SUMMARY section',
+        '- improve density through truthful content shaping only',
+        '- prefer strengthening Experience first',
+        '- compress Skills if it is using too many lines',
+        '- allow slightly longer bullets when the added detail improves value and remains grounded',
+        '- do not pad with filler or generic buzzwords',
+      ]
+    : [];
+
   return [
     'You are Needle, the resume-tailor agent for Job Ops.',
     'This is an INTERNAL worker request, not a user-facing reply.',
@@ -222,7 +266,7 @@ export function buildNeedlePromptForTest(args: {
     'Return ONLY valid JSON. No markdown fences. No prose before or after the JSON.',
     '',
     'Truth rules:',
-    '- use only facts supported by the provided job context, base resumes, and prior run context',
+    '- use only facts supported by the provided job context, base resumes, supporting truth sources, and prior run context',
     '- never invent employers, titles, dates, tools, metrics, certifications, education, team size, or outcomes',
     '- if support is weak, note it in gaps/risks instead of fabricating coverage',
     '- choose exactly one provided base resume by selectedResumeVersionId',
@@ -238,6 +282,7 @@ export function buildNeedlePromptForTest(args: {
     '- do not add meta sections like JD Keywords, Density Estimate, Rationale, Notes, or Explanations inside contentMarkdown',
     '- achieve page fill through truthful bullet selection, not filler text or layout gimmicks',
     '- target roughly 2 experience roles, 2 projects, 1 leadership section, and about 18-21 bullets total unless the evidence clearly supports less',
+    ...densityRevisionSection,
     '',
     'Return JSON matching this shape exactly:',
     '{',
@@ -291,11 +336,27 @@ export function buildNeedlePromptForTest(args: {
     'Base resume candidates:',
     JSON.stringify(candidatePayload, null, 2),
     '',
+    'Supporting truth sources (support-only, not for base switching unless explicitly allowed):',
+    JSON.stringify(supportingTruthPayload, null, 2),
+    '',
     'Prior run context (latest first, if any):',
     JSON.stringify(priorRuns, null, 2),
     '',
     'Provisional base hint (non-binding, you may disagree if the evidence supports a better base):',
     JSON.stringify(args.provisionalBaseHint ?? null, null, 2),
+    ...(args.densityRevision
+      ? [
+          '',
+          'Locked base selection for this revision:',
+          JSON.stringify(args.densityRevision.lockedBaseSelection, null, 2),
+          '',
+          'Previous draft markdown:',
+          args.densityRevision.previousDraftMarkdown,
+          '',
+          'Renderer density assessment:',
+          JSON.stringify(args.densityRevision.assessment, null, 2),
+        ]
+      : []),
   ].join('\n');
 }
 

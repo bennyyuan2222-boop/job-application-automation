@@ -129,6 +129,22 @@ export const tailoringGenerationMetadataSchema = z.object({
   sourceTailoringRunId: z.string().nullable().optional(),
 });
 
+export const tailoringQaMetadataSchema = z.object({
+  status: z.enum(['pass', 'accepted_with_warning']),
+  attempts: z.number().int().nonnegative(),
+  selectedAttemptIndex: z.number().int().nonnegative(),
+  densityScore: z.number().min(0).max(100),
+  reasons: z.array(z.string()),
+  metricsSummary: z.object({
+    bottomWhitespacePts: z.number(),
+    bottomWhitespaceRatio: z.number(),
+    oneLineBulletRatio: z.number(),
+    skillsRenderedLines: z.number().int().nonnegative(),
+    finalSectionRenderedLines: z.number().int().nonnegative(),
+    totalRenderedLines: z.number().int().nonnegative(),
+  }),
+});
+
 export const needleAgentDraftSchema = z.object({
   title: z.string(),
   contentMarkdown: z.string().min(1),
@@ -173,6 +189,7 @@ export const tailoringRunSummarySchema = z.object({
   fitAssessment: tailoringFitAssessmentSchema.nullable(),
   baseSelection: tailoringBaseSelectionSchema.nullable(),
   generationMetadata: tailoringGenerationMetadataSchema.nullable(),
+  qaMetadata: tailoringQaMetadataSchema.nullable().optional(),
   failureCode: z.string().nullable(),
   failureMessage: z.string().nullable(),
   outputResumeVersionId: z.string().nullable(),
@@ -403,6 +420,7 @@ export type TailoringRisk = z.infer<typeof tailoringRiskSchema>;
 export type TailoringFitAssessment = z.infer<typeof tailoringFitAssessmentSchema>;
 export type TailoringBaseSelection = z.infer<typeof tailoringBaseSelectionSchema>;
 export type TailoringGenerationMetadata = z.infer<typeof tailoringGenerationMetadataSchema>;
+export type TailoringQaMetadata = z.infer<typeof tailoringQaMetadataSchema>;
 export type NeedleAgentDraft = z.infer<typeof needleAgentDraftSchema>;
 export type NeedleAgentResponse = z.infer<typeof needleAgentResponseSchema>;
 export type TailoringRunSummary = z.infer<typeof tailoringRunSummarySchema>;

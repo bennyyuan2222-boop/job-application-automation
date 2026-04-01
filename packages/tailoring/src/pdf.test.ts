@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { ResumeDocument } from '@job-ops/domain';
 
-import { renderResumePdf } from './pdf';
+import { renderResumePdf, renderResumePdfDetailed } from './pdf';
 
 const sampleDocument: ResumeDocument = {
   meta: {
@@ -46,4 +46,19 @@ test('renderResumePdf returns PDF bytes with expected header/footer markers and 
   assert.match(text, /Northstar/);
   assert.doesNotMatch(text, /SUMMARY/);
   assert.match(text, /0\.270 0\.670 0\.820 rg/);
+});
+
+test('renderResumePdfDetailed returns layout metrics for density analysis', () => {
+  const result = renderResumePdfDetailed('Northstar Business Analyst Resume', sampleDocument);
+
+  assert.ok(result.pdfBuffer.byteLength > 200);
+  assert.equal(result.layoutMetrics.pageCount, 1);
+  assert.equal(result.layoutMetrics.overflowed, false);
+  assert.ok(result.layoutMetrics.bottomWhitespacePts > 0);
+  assert.ok(result.layoutMetrics.totalRenderedLines > 0);
+
+  const experience = result.layoutMetrics.sectionMetrics.find((section) => section.sectionKind === 'experience');
+  assert.ok(experience);
+  assert.ok((experience?.renderedLines ?? 0) >= 3);
+  assert.equal(experience?.bulletCount, 2);
 });
