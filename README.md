@@ -70,6 +70,8 @@ They are **not** the canonical product root.
 
 Then open the app and sign in with an email listed in `AUTH_ALLOWED_EMAILS`.
 
+For Needle density QA, keep `NEEDLE_DENSITY_BASELINE_RESUME_VERSION_ID` pointed at the canonical seeded baseline (`resume-base-aebenny-canonical-v1`) unless you intentionally promote a new AEBenny master.
+
 ## Deployment-ready basics
 
 The repo now has the minimum deployment helpers for a first hosted preview:

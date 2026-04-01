@@ -111,6 +111,59 @@ async function ensureAuditEvent(params: {
   });
 }
 
+async function ensureCanonicalAebennyBaseline(baseResumes: Record<string, SeededBaseResume>) {
+  const businessAnalystBase = baseResumes.business_analyst;
+  if (!businessAnalystBase) {
+    throw new Error('Missing business analyst base resume needed for canonical AEBenny baseline seeding');
+  }
+
+  const canonicalDocument = {
+    ...businessAnalystBase.document,
+    meta: {
+      ...(businessAnalystBase.document.meta ?? {}),
+      displayName: 'Benny Yuan',
+      headerLines: ['(423)-933-0077 | bennyyuan2002@gmail.com | Available June 2026'],
+    },
+  };
+
+  const contentMarkdown = renderResumeDocument('Benny Yuan', canonicalDocument);
+  const seeded = await prisma.resumeVersion.upsert({
+    where: { id: 'resume-base-aebenny-canonical-v1' },
+    update: {
+      kind: ResumeVersionKind.base,
+      title: 'AEBenny-Yuan Canonical Master Resume',
+      contentMarkdown,
+      sectionsJson: canonicalDocument,
+      changeSummaryJson: [
+        'Canonical AEBenny density-QA baseline derived from Benny\'s business-analyst master resume source.',
+        'Promoted from the seeded business-analyst truth source for renderer-aware density QA.',
+      ],
+      createdByType: ResumeCreatedByType.manual,
+    },
+    create: {
+      id: 'resume-base-aebenny-canonical-v1',
+      kind: ResumeVersionKind.base,
+      title: 'AEBenny-Yuan Canonical Master Resume',
+      contentMarkdown,
+      sectionsJson: canonicalDocument,
+      changeSummaryJson: [
+        'Canonical AEBenny density-QA baseline derived from Benny\'s business-analyst master resume source.',
+        'Promoted from the seeded business-analyst truth source for renderer-aware density QA.',
+      ],
+      createdByType: ResumeCreatedByType.manual,
+    },
+  });
+
+  baseResumes.aebenny_canonical = {
+    prismaId: seeded.id,
+    id: seeded.id,
+    lane: 'business_analyst',
+    title: seeded.title,
+    contentMarkdown: seeded.contentMarkdown,
+    document: canonicalDocument,
+  };
+}
+
 async function ensureLegacyBaseResumes(): Promise<Record<string, SeededBaseResume>> {
   const inventory = await readJsonFile<LegacyResumeInventory>('data/profile/resume_inventory.json');
   const manifests = await readJsonFile<LegacyBaseManifest>('data/profile/base_resume_manifests.json');
@@ -190,6 +243,8 @@ async function ensureLegacyBaseResumes(): Promise<Record<string, SeededBaseResum
       document,
     };
   }
+
+  await ensureCanonicalAebennyBaseline(result);
 
   return result;
 }
