@@ -66,6 +66,18 @@ enum NeedleTaskStatus {
   cancelled
 }
 
+enum LatchTaskType {
+  prepare_application_workspace
+}
+
+enum LatchTaskStatus {
+  queued
+  processing
+  completed
+  failed
+  cancelled
+}
+
 enum AnswerSourceType {
   manual
   agent
@@ -337,6 +349,7 @@ model Application {
   updatedAt               DateTime                @updatedAt
   tailoringRuns           TailoringRun[]
   needleTasks             NeedleTask[]
+  latchTasks              LatchTask[]
   answers                 ApplicationAnswer[]
   attachments             ApplicationAttachment[]
   portalSessions          PortalSession[]
@@ -418,6 +431,45 @@ model NeedleWorkerHeartbeat {
   lastErrorMessage    String?
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
+}
+
+model LatchTask {
+  id                  String          @id @default(cuid())
+  applicationId       String
+  application         Application     @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  taskType            LatchTaskType
+  status              LatchTaskStatus @default(queued)
+  requestedByLabel    String
+  requestPayloadJson  Json
+  responsePayloadJson Json?
+  failureCode         String?
+  failureMessage      String?
+  startedAt           DateTime?
+  completedAt         DateTime?
+  workerLabel         String?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  @@index([applicationId, createdAt])
+  @@index([status, createdAt])
+}
+
+model LatchWorkerHeartbeat {
+  workerLabel         String        @id
+  state               String
+  processId           Int?
+  hostname            String?
+  dbHost              String?
+  openclawBin         String?
+  currentTaskId       String?
+  currentTaskType     LatchTaskType?
+  lastPolledAt        DateTime
+  lastClaimedTaskId   String?
+  lastCompletedTaskId String?
+  lastErrorCode       String?
+  lastErrorMessage    String?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
 }
 
 model ApplicationAnswer {

@@ -42,6 +42,7 @@ import {
   requestTailoringFromNeedleAgent,
   type NeedlePriorRunContext,
 } from './agent';
+import { enqueuePrepareApplicationWorkspace } from '@job-ops/latch-worker';
 
 function toRequirementList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
@@ -948,6 +949,7 @@ export async function approveTailoringRunForApplication(
   options?: { actorLabel?: string },
 ) {
   const actorLabel = options?.actorLabel ?? 'needle';
+  const approvedAt = new Date();
   const application = await loadApplicationContext(applicationId);
   const run = await prisma.tailoringRun.findUnique({ where: { id: tailoringRunId } });
 
@@ -976,7 +978,7 @@ export async function approveTailoringRunForApplication(
   const artifactFilename = buildResumeArtifactFilename(approvedResume.title, 'pdf');
   const artifactPath = buildResumeArtifactPath(approvedResume.id);
 
-  await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
     await tx.tailoringRun.update({
       where: { id: run.id },
       data: { status: 'approved' },
@@ -1015,6 +1017,12 @@ export async function approveTailoringRunForApplication(
       },
     });
 
+    const latchTask = await enqueuePrepareApplicationWorkspace(application.id, run.id, {
+      actorLabel,
+      approvedAt,
+      tx,
+    });
+
     await tx.auditEvent.createMany({
       data: [
         makeAuditEvent({
@@ -1035,7 +1043,12 @@ export async function approveTailoringRunForApplication(
           actorLabel,
           beforeState: { status: application.status },
           afterState: { status: ApplicationStatus.applying, tailoredResumeVersionId: run.outputResumeVersionId },
-          payloadJson: { approvedTailoringRunId: run.id },
+          payloadJson: {
+            approvedTailoringRunId: run.id,
+            latchTaskId: latchTask.id,
+            latchTaskStatus: latchTask.status,
+            latchTaskType: latchTask.taskType,
+          },
         }),
         makeAuditEvent({
           entityType: 'application',
@@ -1051,6 +1064,14 @@ export async function approveTailoringRunForApplication(
         }),
       ],
     });
+
+    return {
+      approvedTailoringRunId: run.id,
+      tailoredResumeVersionId: run.outputResumeVersionId,
+      latchTaskId: latchTask.id,
+      latchTaskStatus: latchTask.status,
+      latchTaskType: latchTask.taskType,
+    };
   });
 }
 

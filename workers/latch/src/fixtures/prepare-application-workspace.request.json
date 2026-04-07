@@ -1,0 +1,42 @@
+{
+  "contractVersion": "latch-application-ops-v1",
+  "lane": "Latch",
+  "boundary": {
+    "runtime": "openclaw_agent",
+    "agentId": "application-ops"
+  },
+  "intent": "prepare_application_workspace",
+  "applicationId": "app_01HXYZLATCH",
+  "jobId": "job_01HXYZOPS",
+  "applicationStatus": "applying",
+  "handoff": {
+    "source": "needle_approved_handoff",
+    "approvedTailoringRunId": "tailoring_run_approved_01",
+    "tailoredResumeVersionId": "resume_tailored_2026_04_07",
+    "approvedAt": "2026-04-07T19:40:00.000Z",
+    "approvedBy": {
+      "actorType": "user",
+      "actorLabel": "Benny"
+    },
+    "transition": {
+      "fromStatus": "tailoring_review",
+      "toStatus": "applying"
+    }
+  },
+  "policy": {
+    "lane": "Latch",
+    "firstTaskIntent": "prepare_application_workspace",
+    "inferredAnswersDefaultReviewState": "needs_review",
+    "inferredAnswersRequireHumanReview": true,
+    "allowReusableProfileAnswers": true,
+    "liveBrowserFillAllowed": false,
+    "humanFinalReviewRequired": true,
+    "humanFinalSubmitRequired": true
+  },
+  "existingPortalContext": {
+    "launchUrl": "https://boards.greenhouse.io/example/jobs/12345/application",
+    "providerDomain": "boards.greenhouse.io",
+    "mode": "manual",
+    "status": "not_started"
+  }
+}

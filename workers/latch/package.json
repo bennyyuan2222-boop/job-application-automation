@@ -1,5 +1,5 @@
 {
-  "name": "@job-ops/needle-worker",
+  "name": "@job-ops/latch-worker",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -8,13 +8,12 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "tsx --test src/**/*.test.ts",
     "queue:once": "tsx src/runner.ts once",
-    "queue:watch": "tsx src/runner.ts watch"
+    "queue:watch": "tsx src/runner.ts watch",
+    "ops": "tsx src/ops.ts"
   },
   "dependencies": {
     "@job-ops/contracts": "*",
     "@job-ops/db": "*",
-    "@job-ops/domain": "*",
-    "@job-ops/latch-worker": "*",
-    "@job-ops/tailoring": "*"
+    "@job-ops/domain": "*"
   }
 }

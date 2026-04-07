@@ -3,13 +3,11 @@
 import { revalidatePath } from 'next/cache';
 
 import {
+  approveTailoringRunForApplication,
   enqueueTailoringDraftGeneration,
   enqueueTailoringRevisionRequest,
-} from '@job-ops/needle-worker';
-import {
-  approveTailoringRunForApplication,
   pauseTailoringForApplication,
-} from '../../../../../workers/needle/src/service';
+} from '@job-ops/needle-worker';
 
 import { requireSession } from '../../../lib/auth';
 
@@ -25,6 +23,7 @@ function revalidateTailoringPaths(applicationId: string) {
   revalidatePath('/tailoring');
   revalidatePath(`/tailoring/${applicationId}`);
   revalidatePath(`/applications/${applicationId}`);
+  revalidatePath('/applying');
   revalidatePath('/activity');
 }
 

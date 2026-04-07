@@ -1,0 +1,154 @@
+{
+  "contractVersion": "latch-application-ops-v1",
+  "lane": "Latch",
+  "boundary": {
+    "runtime": "openclaw_agent",
+    "agentId": "application-ops"
+  },
+  "intent": "prepare_application_workspace",
+  "status": "completed",
+  "applicationId": "app_01HXYZLATCH",
+  "summary": "Prepared application workspace draft answers and flagged inferred answers for review.",
+  "policy": {
+    "lane": "Latch",
+    "firstTaskIntent": "prepare_application_workspace",
+    "inferredAnswersDefaultReviewState": "needs_review",
+    "inferredAnswersRequireHumanReview": true,
+    "allowReusableProfileAnswers": true,
+    "liveBrowserFillAllowed": false,
+    "humanFinalReviewRequired": true,
+    "humanFinalSubmitRequired": true
+  },
+  "confidenceSemantics": {
+    "scale": "0_to_1",
+    "bands": {
+      "unknown": {
+        "description": "Confidence was not supplied or cannot be interpreted yet."
+      },
+      "low": {
+        "minInclusive": 0,
+        "maxExclusive": 0.5,
+        "description": "Weak support. Human review is required and likely edits are needed."
+      },
+      "medium": {
+        "minInclusive": 0.5,
+        "maxExclusive": 0.8,
+        "description": "Plausible draft support. Human review is still required before handoff."
+      },
+      "high": {
+        "minInclusive": 0.8,
+        "maxInclusive": 1,
+        "description": "Strong support, but Milestone 3 still keeps inferred answers in needs_review by default."
+      }
+    },
+    "defaultInferredReviewState": "needs_review",
+    "notes": [
+      "Confidence is advisory, not an auto-accept signal in Milestone 3.",
+      "Inferred answers remain needs_review until a human or trusted explicit workflow accepts them."
+    ]
+  },
+  "preparedAnswers": [
+    {
+      "fieldKey": "work_authorization_us",
+      "fieldLabel": "Are you authorized to work in the United States?",
+      "fieldGroup": "eligibility",
+      "value": "Yes",
+      "required": true,
+      "sourceType": "profile",
+      "reviewState": "needs_review",
+      "confidence": 0.93,
+      "confidenceBand": "high",
+      "provenance": [
+        {
+          "sourceType": "profile",
+          "sourceId": "profile_answer_001",
+          "sourceLabel": "Reusable application profile",
+          "sourceFieldKey": "work_authorization_us",
+          "capturedAt": "2026-04-07T19:39:30.000Z",
+          "evidence": [
+            "Reusable profile answer imported into application workspace."
+          ],
+          "rationale": [
+            "Reusable profile answers stay in needs_review by policy for Milestone 3."
+          ]
+        }
+      ],
+      "notes": [
+        "Copied from reusable profile answers and left in needs_review."
+      ]
+    },
+    {
+      "fieldKey": "years_of_sql",
+      "fieldLabel": "How many years of SQL experience do you have?",
+      "fieldGroup": "experience",
+      "value": "2",
+      "required": false,
+      "sourceType": "derived",
+      "reviewState": "needs_review",
+      "confidence": 0.64,
+      "confidenceBand": "medium",
+      "provenance": [
+        {
+          "sourceType": "resume",
+          "sourceArtifactId": "resume_tailored_2026_04_07",
+          "sourceArtifactKind": "resume_version",
+          "capturedAt": "2026-04-07T19:39:31.000Z",
+          "evidence": [
+            "Resume references SQL-based KPI reporting in two roles."
+          ],
+          "rationale": [
+            "Derived answer needs review because the years value is inferred."
+          ]
+        }
+      ],
+      "notes": [
+        "Check the inferred duration before submit review."
+      ]
+    }
+  ],
+  "readiness": {
+    "ready": false,
+    "completionPercent": 84,
+    "missingRequiredCount": 0,
+    "answersPendingReviewCount": 2,
+    "lowConfidenceCount": 0,
+    "hardBlockers": [],
+    "softWarnings": [
+      {
+        "code": "answers_pending_review",
+        "level": "warning",
+        "message": "Two inferred answers still require human review.",
+        "count": 2
+      },
+      {
+        "code": "portal_session_missing",
+        "level": "warning",
+        "message": "No live portal session has been registered yet."
+      }
+    ],
+    "recommendedNextAction": "review inferred answers"
+  },
+  "selectedResumeVersionId": "resume_tailored_2026_04_07",
+  "attachedResumeVersionId": "resume_tailored_2026_04_07",
+  "portalTracking": {
+    "tracked": false,
+    "mode": null,
+    "status": null
+  },
+  "audit": {
+    "provenanceCaptured": true,
+    "emittedEventTypes": [
+      "latch.workspace_prepared",
+      "latch.answers_reconciled"
+    ]
+  },
+  "browserAutomation": {
+    "attempted": false,
+    "reason": "out_of_scope_for_milestone_3"
+  },
+  "humanBoundary": {
+    "finalReviewRequired": true,
+    "finalSubmitRequired": true
+  },
+  "failure": null
+}

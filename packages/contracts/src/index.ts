@@ -1,3 +1,5 @@
+export * from './latch';
+
 import { z } from 'zod';
 
 export const provenanceSchema = z
