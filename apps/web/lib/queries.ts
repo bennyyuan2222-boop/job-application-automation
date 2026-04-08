@@ -27,7 +27,7 @@ import {
   type TailoringDetail,
   type TailoringQueueItem,
 } from '@job-ops/contracts';
-import { prisma } from '@job-ops/db';
+import { Prisma, prisma } from '@job-ops/db';
 import {
   getInboxJobs as getReadModelInboxJobs,
   getSeededJobs as getReadModelSeededJobs,
@@ -355,6 +355,88 @@ function parseInteger(value: string | undefined, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function isMissingLatchInfrastructureError(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+    return false;
+  }
+
+  if (error.code === 'P2021') {
+    const table = typeof error.meta?.table === 'string' ? error.meta.table : '';
+    if (table.includes('LatchTask') || table.includes('LatchWorkerHeartbeat')) {
+      return true;
+    }
+  }
+
+  if (error.code === 'P2022') {
+    const column = typeof error.meta?.column === 'string' ? error.meta.column : '';
+    const message = error.message ?? '';
+    if (
+      column.includes('LatchTask') ||
+      column.includes('LatchWorkerHeartbeat') ||
+      message.includes('LatchTask') ||
+      message.includes('LatchWorkerHeartbeat')
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function getLegacyOperationalApplicationQueue(
+  statuses: Array<'applying' | 'submit_review' | 'submitted'>,
+): Promise<ApplyingQueueItem[]> {
+  const applications = await prisma.application.findMany({
+    where: {
+      status: {
+        in: statuses,
+      },
+    },
+    include: {
+      job: {
+        include: {
+          company: true,
+        },
+      },
+      tailoredResumeVersion: true,
+      answers: true,
+      attachments: true,
+      portalSessions: {
+        orderBy: [{ lastSyncedAt: 'desc' }, { id: 'desc' }],
+      },
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+
+  return applications.map((application) => {
+    const readiness = evaluateApplicationReadiness({
+      status: application.status,
+      tailoredResumeVersionId: application.tailoredResumeVersionId,
+      answers: application.answers,
+      attachments: application.attachments,
+      portalSessions: application.portalSessions,
+    });
+
+    return applyingQueueItemSchema.parse({
+      id: application.id,
+      status: application.status,
+      updatedAt: application.updatedAt.toISOString(),
+      portalDomain: application.portalDomain,
+      completionPercent: readiness.completionPercent,
+      missingRequiredCount: readiness.missingRequiredCount,
+      lowConfidenceCount: readiness.lowConfidenceCount,
+      hasHardBlockers: readiness.hardBlockers.length > 0,
+      workspacePrepState: 'not_started',
+      activeLatchTask: null,
+      latestLatchTask: null,
+      latchWorker: null,
+      selectedTailoredResumeTitle: application.tailoredResumeVersion?.title ?? null,
+      jobTitle: application.job.title,
+      companyName: application.job.company.name,
+    });
+  });
+}
+
 export async function getRecentAuditEvents(limit = 20): Promise<AuditEventItem[]> {
   const events = await prisma.auditEvent.findMany({
     orderBy: { createdAt: 'desc' },
@@ -390,93 +472,101 @@ export async function getShortlistedJobs(): Promise<JobListItem[]> {
 async function getOperationalApplicationQueue(
   statuses: Array<'applying' | 'submit_review' | 'submitted'>,
 ): Promise<ApplyingQueueItem[]> {
-  const applications = await prisma.application.findMany({
-    where: {
-      status: {
-        in: statuses,
-      },
-    },
-    include: {
-      job: {
-        include: {
-          company: true,
+  try {
+    const applications = await prisma.application.findMany({
+      where: {
+        status: {
+          in: statuses,
         },
       },
-      tailoredResumeVersion: true,
-      answers: true,
-      attachments: true,
-      portalSessions: {
-        orderBy: [{ lastSyncedAt: 'desc' }, { id: 'desc' }],
+      include: {
+        job: {
+          include: {
+            company: true,
+          },
+        },
+        tailoredResumeVersion: true,
+        answers: true,
+        attachments: true,
+        portalSessions: {
+          orderBy: [{ lastSyncedAt: 'desc' }, { id: 'desc' }],
+        },
+        latchTasks: {
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+        },
       },
-      latchTasks: {
-        orderBy: { createdAt: 'desc' },
-        take: 5,
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    const heartbeats = await prisma.latchWorkerHeartbeat.findMany({
+      orderBy: { updatedAt: 'desc' },
+      take: 10,
+      select: {
+        workerLabel: true,
+        state: true,
+        currentTaskId: true,
+        currentTaskType: true,
+        lastClaimedTaskId: true,
+        lastCompletedTaskId: true,
+        lastErrorCode: true,
+        lastErrorMessage: true,
+        updatedAt: true,
       },
-    },
-    orderBy: { updatedAt: 'desc' },
-  });
-
-  const heartbeats = await prisma.latchWorkerHeartbeat.findMany({
-    orderBy: { updatedAt: 'desc' },
-    take: 10,
-    select: {
-      workerLabel: true,
-      state: true,
-      currentTaskId: true,
-      currentTaskType: true,
-      lastClaimedTaskId: true,
-      lastCompletedTaskId: true,
-      lastErrorCode: true,
-      lastErrorMessage: true,
-      updatedAt: true,
-    },
-  });
-
-  const heartbeatSummaries = heartbeats.map((heartbeat) => mapLatchWorkerHeartbeatSummary(heartbeat));
-  const heartbeatsByWorker = new Map(heartbeatSummaries.map((heartbeat) => [heartbeat.workerLabel, heartbeat]));
-  const latestHeartbeat = heartbeatSummaries[0] ?? null;
-
-  return applications.map((application) => {
-    const readiness = evaluateApplicationReadiness({
-      status: application.status,
-      tailoredResumeVersionId: application.tailoredResumeVersionId,
-      answers: application.answers,
-      attachments: application.attachments,
-      portalSessions: application.portalSessions,
     });
 
-    const activeLatchTask = (() => {
-      const task = application.latchTasks.find((item) => item.status === 'queued' || item.status === 'processing');
-      return task ? mapLatchTaskSummary(task) : null;
-    })();
-    const latestLatchTask = application.latchTasks[0] ? mapLatchTaskSummary(application.latchTasks[0]) : null;
-    const workspacePrepState = getWorkspacePrepState({
-      activeTask: activeLatchTask,
-      latestTask: latestLatchTask,
-    });
+    const heartbeatSummaries = heartbeats.map((heartbeat) => mapLatchWorkerHeartbeatSummary(heartbeat));
+    const heartbeatsByWorker = new Map(heartbeatSummaries.map((heartbeat) => [heartbeat.workerLabel, heartbeat]));
+    const latestHeartbeat = heartbeatSummaries[0] ?? null;
 
-    return applyingQueueItemSchema.parse({
-      id: application.id,
-      status: application.status,
-      updatedAt: application.updatedAt.toISOString(),
-      portalDomain: application.portalDomain,
-      completionPercent: readiness.completionPercent,
-      missingRequiredCount: readiness.missingRequiredCount,
-      lowConfidenceCount: readiness.lowConfidenceCount,
-      hasHardBlockers: readiness.hardBlockers.length > 0,
-      workspacePrepState,
-      activeLatchTask: activeLatchTask,
-      latestLatchTask: latestLatchTask,
-      latchWorker: pickLatchWorkerSummary({
-        heartbeatsByWorker,
-        latestHeartbeat,
-        workerLabel: activeLatchTask?.workerLabel ?? latestLatchTask?.workerLabel,
-      }),
-      selectedTailoredResumeTitle: application.tailoredResumeVersion?.title ?? null,
-      jobTitle: application.job.title,
-      companyName: application.job.company.name,
+    return applications.map((application) => {
+      const readiness = evaluateApplicationReadiness({
+        status: application.status,
+        tailoredResumeVersionId: application.tailoredResumeVersionId,
+        answers: application.answers,
+        attachments: application.attachments,
+        portalSessions: application.portalSessions,
+      });
+
+      const activeLatchTask = (() => {
+        const task = application.latchTasks.find((item) => item.status === 'queued' || item.status === 'processing');
+        return task ? mapLatchTaskSummary(task) : null;
+      })();
+      const latestLatchTask = application.latchTasks[0] ? mapLatchTaskSummary(application.latchTasks[0]) : null;
+      const workspacePrepState = getWorkspacePrepState({
+        activeTask: activeLatchTask,
+        latestTask: latestLatchTask,
+      });
+
+      return applyingQueueItemSchema.parse({
+        id: application.id,
+        status: application.status,
+        updatedAt: application.updatedAt.toISOString(),
+        portalDomain: application.portalDomain,
+        completionPercent: readiness.completionPercent,
+        missingRequiredCount: readiness.missingRequiredCount,
+        lowConfidenceCount: readiness.lowConfidenceCount,
+        hasHardBlockers: readiness.hardBlockers.length > 0,
+        workspacePrepState,
+        activeLatchTask: activeLatchTask,
+        latestLatchTask: latestLatchTask,
+        latchWorker: pickLatchWorkerSummary({
+          heartbeatsByWorker,
+          latestHeartbeat,
+          workerLabel: activeLatchTask?.workerLabel ?? latestLatchTask?.workerLabel,
+        }),
+        selectedTailoredResumeTitle: application.tailoredResumeVersion?.title ?? null,
+        jobTitle: application.job.title,
+        companyName: application.job.company.name,
+      });
     });
-  });
+  } catch (error) {
+    if (isMissingLatchInfrastructureError(error)) {
+      return getLegacyOperationalApplicationQueue(statuses);
+    }
+
+    throw error;
+  }
 }
 
 export async function getApplyingQueue(): Promise<ApplyingQueueItem[]> {
@@ -488,25 +578,33 @@ export async function getSubmitReviewQueue(): Promise<ApplyingQueueItem[]> {
 }
 
 export async function getLatestLatchWorkerHeartbeatSummary(): Promise<LatchWorkerHeartbeatSummary | null> {
-  const heartbeat = await prisma.latchWorkerHeartbeat.findFirst({
-    orderBy: { updatedAt: 'desc' },
-    select: {
-      workerLabel: true,
-      state: true,
-      currentTaskId: true,
-      currentTaskType: true,
-      lastClaimedTaskId: true,
-      lastCompletedTaskId: true,
-      lastErrorCode: true,
-      lastErrorMessage: true,
-      updatedAt: true,
-    },
-  });
+  try {
+    const heartbeat = await prisma.latchWorkerHeartbeat.findFirst({
+      orderBy: { updatedAt: 'desc' },
+      select: {
+        workerLabel: true,
+        state: true,
+        currentTaskId: true,
+        currentTaskType: true,
+        lastClaimedTaskId: true,
+        lastCompletedTaskId: true,
+        lastErrorCode: true,
+        lastErrorMessage: true,
+        updatedAt: true,
+      },
+    });
 
-  return heartbeat ? mapLatchWorkerHeartbeatSummary(heartbeat) : null;
+    return heartbeat ? mapLatchWorkerHeartbeatSummary(heartbeat) : null;
+  } catch (error) {
+    if (isMissingLatchInfrastructureError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
 }
 
-export async function getApplicationDetail(applicationId: string): Promise<ApplicationDetail | null> {
+async function getLegacyApplicationDetail(applicationId: string): Promise<ApplicationDetail | null> {
   const application = await prisma.application.findUnique({
     where: { id: applicationId },
     include: {
@@ -529,10 +627,6 @@ export async function getApplicationDetail(applicationId: string): Promise<Appli
       portalSessions: {
         orderBy: [{ lastSyncedAt: 'desc' }, { id: 'desc' }],
       },
-      latchTasks: {
-        orderBy: { createdAt: 'desc' },
-        take: 5,
-      },
     },
   });
 
@@ -548,43 +642,17 @@ export async function getApplicationDetail(applicationId: string): Promise<Appli
     portalSessions: application.portalSessions,
   });
 
-  const [auditEvents, heartbeats] = await Promise.all([
-    prisma.auditEvent.findMany({
-      where: {
-        OR: [
-          { entityType: 'application', entityId: application.id },
-          { entityType: 'job', entityId: application.jobId },
-          ...application.portalSessions.map((session) => ({ entityType: 'portal_session', entityId: session.id })),
-        ],
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 20,
-    }),
-    prisma.latchWorkerHeartbeat.findMany({
-      orderBy: { updatedAt: 'desc' },
-      take: 10,
-      select: {
-        workerLabel: true,
-        state: true,
-        currentTaskId: true,
-        currentTaskType: true,
-        lastClaimedTaskId: true,
-        lastCompletedTaskId: true,
-        lastErrorCode: true,
-        lastErrorMessage: true,
-        updatedAt: true,
-      },
-    }),
-  ]);
-
-  const activeLatchTask = (() => {
-    const task = application.latchTasks.find((item) => item.status === 'queued' || item.status === 'processing');
-    return task ? mapLatchTaskSummary(task) : null;
-  })();
-  const latestLatchTask = application.latchTasks[0] ? mapLatchTaskSummary(application.latchTasks[0]) : null;
-  const heartbeatSummaries = heartbeats.map((heartbeat) => mapLatchWorkerHeartbeatSummary(heartbeat));
-  const heartbeatsByWorker = new Map(heartbeatSummaries.map((heartbeat) => [heartbeat.workerLabel, heartbeat]));
-  const latestHeartbeat = heartbeatSummaries[0] ?? null;
+  const auditEvents = await prisma.auditEvent.findMany({
+    where: {
+      OR: [
+        { entityType: 'application', entityId: application.id },
+        { entityType: 'job', entityId: application.jobId },
+        ...application.portalSessions.map((session) => ({ entityType: 'portal_session', entityId: session.id })),
+      ],
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 20,
+  });
 
   return applicationDetailSchema.parse({
     id: application.id,
@@ -592,17 +660,10 @@ export async function getApplicationDetail(applicationId: string): Promise<Appli
     completionPercent: readiness.completionPercent,
     missingRequiredCount: readiness.missingRequiredCount,
     lowConfidenceCount: readiness.lowConfidenceCount,
-    workspacePrepState: getWorkspacePrepState({
-      activeTask: activeLatchTask,
-      latestTask: latestLatchTask,
-    }),
-    activeLatchTask: activeLatchTask,
-    latestLatchTask: latestLatchTask,
-    latchWorker: pickLatchWorkerSummary({
-      heartbeatsByWorker,
-      latestHeartbeat,
-      workerLabel: activeLatchTask?.workerLabel ?? latestLatchTask?.workerLabel,
-    }),
+    workspacePrepState: 'not_started',
+    activeLatchTask: null,
+    latestLatchTask: null,
+    latchWorker: null,
     readiness,
     job: {
       id: application.job.id,
@@ -666,6 +727,176 @@ export async function getApplicationDetail(applicationId: string): Promise<Appli
       payloadJson: event.payloadJson,
     })),
   });
+}
+
+export async function getApplicationDetail(applicationId: string): Promise<ApplicationDetail | null> {
+  try {
+    const application = await prisma.application.findUnique({
+      where: { id: applicationId },
+      include: {
+        job: {
+          include: {
+            company: true,
+          },
+        },
+        baseResumeVersion: true,
+        tailoredResumeVersion: true,
+        answers: {
+          orderBy: { fieldLabel: 'asc' },
+        },
+        attachments: {
+          include: {
+            resumeVersion: true,
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+        portalSessions: {
+          orderBy: [{ lastSyncedAt: 'desc' }, { id: 'desc' }],
+        },
+        latchTasks: {
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+        },
+      },
+    });
+
+    if (!application) {
+      return null;
+    }
+
+    const readiness = evaluateApplicationReadiness({
+      status: application.status,
+      tailoredResumeVersionId: application.tailoredResumeVersionId,
+      answers: application.answers,
+      attachments: application.attachments,
+      portalSessions: application.portalSessions,
+    });
+
+    const [auditEvents, heartbeats] = await Promise.all([
+      prisma.auditEvent.findMany({
+        where: {
+          OR: [
+            { entityType: 'application', entityId: application.id },
+            { entityType: 'job', entityId: application.jobId },
+            ...application.portalSessions.map((session) => ({ entityType: 'portal_session', entityId: session.id })),
+          ],
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      }),
+      prisma.latchWorkerHeartbeat.findMany({
+        orderBy: { updatedAt: 'desc' },
+        take: 10,
+        select: {
+          workerLabel: true,
+          state: true,
+          currentTaskId: true,
+          currentTaskType: true,
+          lastClaimedTaskId: true,
+          lastCompletedTaskId: true,
+          lastErrorCode: true,
+          lastErrorMessage: true,
+          updatedAt: true,
+        },
+      }),
+    ]);
+
+    const activeLatchTask = (() => {
+      const task = application.latchTasks.find((item) => item.status === 'queued' || item.status === 'processing');
+      return task ? mapLatchTaskSummary(task) : null;
+    })();
+    const latestLatchTask = application.latchTasks[0] ? mapLatchTaskSummary(application.latchTasks[0]) : null;
+    const heartbeatSummaries = heartbeats.map((heartbeat) => mapLatchWorkerHeartbeatSummary(heartbeat));
+    const heartbeatsByWorker = new Map(heartbeatSummaries.map((heartbeat) => [heartbeat.workerLabel, heartbeat]));
+    const latestHeartbeat = heartbeatSummaries[0] ?? null;
+
+    return applicationDetailSchema.parse({
+      id: application.id,
+      status: application.status,
+      completionPercent: readiness.completionPercent,
+      missingRequiredCount: readiness.missingRequiredCount,
+      lowConfidenceCount: readiness.lowConfidenceCount,
+      workspacePrepState: getWorkspacePrepState({
+        activeTask: activeLatchTask,
+        latestTask: latestLatchTask,
+      }),
+      activeLatchTask: activeLatchTask,
+      latestLatchTask: latestLatchTask,
+      latchWorker: pickLatchWorkerSummary({
+        heartbeatsByWorker,
+        latestHeartbeat,
+        workerLabel: activeLatchTask?.workerLabel ?? latestLatchTask?.workerLabel,
+      }),
+      readiness,
+      job: {
+        id: application.job.id,
+        title: application.job.title,
+        companyName: application.job.company.name,
+        locationText: application.job.locationText,
+      },
+      baseResume: {
+        id: application.baseResumeVersion.id,
+        kind: application.baseResumeVersion.kind,
+        title: application.baseResumeVersion.title,
+        createdAt: application.baseResumeVersion.createdAt.toISOString(),
+      },
+      tailoredResume: application.tailoredResumeVersion
+        ? {
+            id: application.tailoredResumeVersion.id,
+            kind: application.tailoredResumeVersion.kind,
+            title: application.tailoredResumeVersion.title,
+            createdAt: application.tailoredResumeVersion.createdAt.toISOString(),
+          }
+        : null,
+      answers: application.answers.map((answer) => {
+        const extracted = answerValueFromJson(answer.answerJson);
+        return {
+          id: answer.id,
+          fieldKey: answer.fieldKey,
+          fieldLabel: answer.fieldLabel,
+          fieldGroup: answer.fieldGroup,
+          value: extracted.value,
+          required: extracted.required,
+          sourceType: answer.sourceType,
+          reviewState: answer.reviewState,
+          confidence: answer.confidence,
+        };
+      }),
+      attachments: application.attachments.map((attachment) => ({
+        id: attachment.id,
+        attachmentType: attachment.attachmentType,
+        filename: attachment.filename,
+        fileUrl: attachment.fileUrl,
+        resumeVersionId: attachment.resumeVersionId,
+        resumeVersionTitle: attachment.resumeVersion?.title ?? null,
+      })),
+      portalSessions: application.portalSessions.map((session) => ({
+        id: session.id,
+        mode: session.mode,
+        launchUrl: session.launchUrl,
+        providerDomain: session.providerDomain,
+        status: session.status,
+        lastKnownPageTitle: session.lastKnownPageTitle,
+        notes: session.notes,
+      })),
+      auditEvents: auditEvents.map((event) => ({
+        id: event.id,
+        entityType: event.entityType,
+        entityId: event.entityId,
+        eventType: event.eventType,
+        actorType: event.actorType,
+        actorLabel: event.actorLabel,
+        createdAt: event.createdAt.toISOString(),
+        payloadJson: event.payloadJson,
+      })),
+    });
+  } catch (error) {
+    if (isMissingLatchInfrastructureError(error)) {
+      return getLegacyApplicationDetail(applicationId);
+    }
+
+    throw error;
+  }
 }
 
 export async function getTailoringQueue(): Promise<TailoringQueueItem[]> {
