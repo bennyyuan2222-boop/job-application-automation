@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
+import { AutoRefresh } from '../../../../components/auto-refresh';
 import { getApplicationDetail } from '../../../../lib/queries';
 
 import { addApplicationAttachment, saveApplicationAnswer, savePortalSession } from './actions';
@@ -19,6 +20,49 @@ function renderValue(value: unknown) {
   return <code>{JSON.stringify(value)}</code>;
 }
 
+function humanize(value: string) {
+  return value.replaceAll('_', ' ');
+}
+
+function formatRelativeAge(ageSeconds: number) {
+  if (ageSeconds < 60) {
+    return `${ageSeconds}s ago`;
+  }
+
+  const minutes = Math.floor(ageSeconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
+}
+
+function getWorkspacePrepTone(state: string) {
+  switch (state) {
+    case 'prepared':
+      return 'ok';
+    case 'queued':
+    case 'processing':
+      return 'warning';
+    case 'failed':
+      return 'danger';
+    default:
+      return 'subtle';
+  }
+}
+
+function getHeartbeatTone(freshness: string) {
+  switch (freshness) {
+    case 'fresh':
+      return 'ok';
+    case 'delayed':
+      return 'warning';
+    default:
+      return 'danger';
+  }
+}
+
 export default async function ApplicationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const application = await getApplicationDetail(id);
@@ -31,9 +75,12 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
   const answers = application.answers ?? [];
   const attachments = application.attachments ?? [];
   const portalSessions = application.portalSessions ?? [];
+  const hasActiveLatchTask = Boolean(application.activeLatchTask);
+  const latestVisibleLatchTask = application.activeLatchTask ?? application.latestLatchTask;
 
   return (
     <div className="page-stack">
+      <AutoRefresh enabled={hasActiveLatchTask} intervalMs={5000} />
       <section className="panel">
         <p className="eyebrow">Latch workspace</p>
         <h1>
@@ -43,7 +90,7 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
         <div className="metric-row">
           <div className="metric-card">
             <span>Status</span>
-            <strong>{application.status}</strong>
+            <strong>{humanize(application.status)}</strong>
           </div>
           <div className="metric-card">
             <span>Completion</span>
@@ -58,6 +105,23 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
             <strong>{application.lowConfidenceCount}</strong>
           </div>
         </div>
+        {application.activeLatchTask ? (
+          <p className="error-banner">
+            Latch task {humanize(application.activeLatchTask.status)}: <strong>{humanize(application.activeLatchTask.taskType)}</strong>
+            {application.activeLatchTask.workerLabel ? ` · ${application.activeLatchTask.workerLabel}` : ''}
+          </p>
+        ) : application.latestLatchTask?.status === 'failed' ? (
+          <p className="error-banner">
+            Latest Latch task failed: <strong>{humanize(application.latestLatchTask.taskType)}</strong>
+            {application.latestLatchTask.failureCode ? ` · ${application.latestLatchTask.failureCode}` : ''}
+            {application.latestLatchTask.failureMessage ? ` — ${application.latestLatchTask.failureMessage}` : ''}
+          </p>
+        ) : application.latestLatchTask?.responseStatus === 'blocked' ? (
+          <p className="error-banner">
+            Latest Latch prep completed with blockers.
+            {application.latestLatchTask.responseSummary ? ` ${application.latestLatchTask.responseSummary}` : ''}
+          </p>
+        ) : null}
       </section>
 
       <section className="grid-two">
@@ -109,24 +173,87 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
         </div>
 
         <div className="panel">
-          <h2>Resume state</h2>
+          <h2>Latch operations</h2>
           <div className="stack-blocks">
-            <div className="info-block">
-              <span className="eyebrow">Base resume</span>
-              <strong>{application.baseResume.title}</strong>
-              <span className="muted small">{application.baseResume.kind}</span>
+            <div className={`status-pill ${getWorkspacePrepTone(application.workspacePrepState)}`}>
+              Workspace prep {humanize(application.workspacePrepState)}
             </div>
             <div className="info-block">
-              <span className="eyebrow">Tailored resume</span>
-              {application.tailoredResume ? (
+              <span className="eyebrow">{application.activeLatchTask ? 'Active Latch task' : 'Latest Latch task'}</span>
+              {latestVisibleLatchTask ? (
                 <>
-                  <strong>{application.tailoredResume.title}</strong>
-                  <span className="muted small">{application.tailoredResume.kind}</span>
+                  <strong>
+                    {humanize(latestVisibleLatchTask.status)} · {humanize(latestVisibleLatchTask.taskType)}
+                  </strong>
+                  <span className="muted small">
+                    requested by {latestVisibleLatchTask.requestedByLabel}
+                    {latestVisibleLatchTask.workerLabel ? ` · ${latestVisibleLatchTask.workerLabel}` : ''}
+                  </span>
+                  {latestVisibleLatchTask.responseStatus ? (
+                    <span className={`status-pill ${latestVisibleLatchTask.responseStatus === 'completed' ? 'ok' : latestVisibleLatchTask.responseStatus === 'blocked' ? 'warning' : 'danger'}`}>
+                      Agent {humanize(latestVisibleLatchTask.responseStatus)}
+                    </span>
+                  ) : null}
+                  {latestVisibleLatchTask.failureCode ? (
+                    <span className="muted small">
+                      {latestVisibleLatchTask.failureCode}
+                      {latestVisibleLatchTask.failureMessage ? ` · ${latestVisibleLatchTask.failureMessage}` : ''}
+                    </span>
+                  ) : latestVisibleLatchTask.responseSummary ? (
+                    <span className="muted small">{latestVisibleLatchTask.responseSummary}</span>
+                  ) : null}
                 </>
               ) : (
-                <span className="muted">No tailored resume selected yet.</span>
+                <span className="muted">No Latch task has been queued yet.</span>
               )}
             </div>
+            <div className="info-block">
+              <span className="eyebrow">Worker heartbeat</span>
+              {application.latchWorker ? (
+                <>
+                  <strong>
+                    {humanize(application.latchWorker.freshness)} · {formatRelativeAge(application.latchWorker.ageSeconds)}
+                  </strong>
+                  <span className="muted small">
+                    {application.latchWorker.workerLabel} · {application.latchWorker.state}
+                    {application.latchWorker.currentTaskType ? ` · ${humanize(application.latchWorker.currentTaskType)}` : ''}
+                  </span>
+                  <div className={`status-pill ${getHeartbeatTone(application.latchWorker.freshness)}`}>
+                    {humanize(application.latchWorker.freshness)} heartbeat
+                  </div>
+                  {application.latchWorker.lastErrorCode ? (
+                    <span className="muted small">
+                      {application.latchWorker.lastErrorCode}
+                      {application.latchWorker.lastErrorMessage ? ` · ${application.latchWorker.lastErrorMessage}` : ''}
+                    </span>
+                  ) : null}
+                </>
+              ) : (
+                <span className="muted">No Latch worker heartbeat recorded yet.</span>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>Resume state</h2>
+        <div className="grid-two compact-grid">
+          <div className="info-block">
+            <span className="eyebrow">Base resume</span>
+            <strong>{application.baseResume.title}</strong>
+            <span className="muted small">{application.baseResume.kind}</span>
+          </div>
+          <div className="info-block">
+            <span className="eyebrow">Tailored resume</span>
+            {application.tailoredResume ? (
+              <>
+                <strong>{application.tailoredResume.title}</strong>
+                <span className="muted small">{application.tailoredResume.kind}</span>
+              </>
+            ) : (
+              <span className="muted">No tailored resume selected yet.</span>
+            )}
           </div>
         </div>
       </section>

@@ -30,6 +30,7 @@
     "latch:queue:watch:local": "dotenv -e .env -- npm run latch:queue:watch",
     "latch:ops": "npm run --workspace @job-ops/latch-worker ops --",
     "latch:ops:local": "dotenv -e .env -- npm run latch:ops --",
+    "latch:smoke:local": "bash scripts/latch-smoke.sh",
     "db:seed": "npm run -w @job-ops/db seed",
     "db:seed:local": "dotenv -e .env -- npm run db:seed",
     "scout:seed": "tsx scripts/scout-seed.ts",

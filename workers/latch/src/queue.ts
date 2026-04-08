@@ -3,20 +3,31 @@ import { hostname as getHostname } from 'node:os';
 
 import {
   ActorType,
+  AnswerReviewState,
+  AnswerSourceType,
   ApplicationStatus,
   LatchTaskStatus,
   LatchTaskType,
+  PortalSessionMode,
+  PortalSessionStatus,
   Prisma,
   prisma,
 } from '@job-ops/db';
 import {
   DEFAULT_LATCH_REVIEW_POLICY,
   latchTaskRequestSchema,
+  type LatchAgentResponse,
+  type LatchPreparedAnswer,
   type LatchTaskRequest,
 } from '@job-ops/contracts';
 import { makeAuditEvent } from '@job-ops/domain';
+import { evaluateApplicationReadiness } from '@job-ops/readiness';
 
-import { LatchAgentError, requestApplicationWorkspacePreparation } from './agent';
+import {
+  LatchAgentError,
+  buildLatchTaskRequest,
+  requestApplicationWorkspacePreparation,
+} from './agent';
 
 const STALE_QUEUED_MS = parseInteger(process.env.LATCH_TASK_STALE_QUEUED_MS, 60_000);
 const STALE_PROCESSING_MS = parseInteger(process.env.LATCH_TASK_STALE_PROCESSING_MS, 15 * 60_000);
@@ -67,7 +78,7 @@ export async function enqueueLatchTaskFromNeedleApproval(input: {
   });
 }
 
-async function enqueueLatchTaskFromNeedleApprovalWithTx(
+export async function enqueueLatchTaskFromNeedleApprovalWithTx(
   tx: Prisma.TransactionClient,
   input: {
     applicationId: string;
@@ -203,12 +214,85 @@ export async function processNextLatchTask(options?: { workerLabel?: string }) {
   });
 
   try {
+    const taskRequest = buildLatchTaskRequest(task.requestPayloadJson);
     const response = await requestApplicationWorkspacePreparation({
       taskId: task.id,
-      taskRequest: task.requestPayloadJson,
+      taskRequest,
     });
 
+    if (response.status === 'failed') {
+      const failureCode = response.failure?.code ?? 'internal_error';
+      const failureMessage = response.failure?.message ?? response.summary;
+
+      await prisma.$transaction(async (tx) => {
+        await tx.latchTask.update({
+          where: { id: task.id },
+          data: {
+            status: LatchTaskStatus.failed,
+            responsePayloadJson: toJsonValue(response),
+            completedAt: new Date(),
+            failureCode,
+            failureMessage,
+          },
+        });
+
+        await tx.auditEvent.createMany({
+          data: [
+            makeAuditEvent({
+              entityType: 'application',
+              entityId: task.applicationId,
+              eventType: 'latch_task.failed',
+              actorType: ActorType.system,
+              actorLabel: runtime.workerLabel,
+              payloadJson: {
+                latchTaskId: task.id,
+                taskType: task.taskType,
+                failureCode,
+                failureMessage,
+                responseStatus: response.status,
+              },
+            }),
+            makeAuditEvent({
+              entityType: 'application',
+              entityId: task.applicationId,
+              eventType: 'latch.workspace_preparation_failed',
+              actorType: ActorType.agent,
+              actorLabel: taskRequest.boundary.agentId,
+              payloadJson: {
+                latchTaskId: task.id,
+                summary: response.summary,
+                failure: JSON.parse(JSON.stringify(response.failure)),
+                readiness: response.readiness,
+                emittedEventTypes: response.audit.emittedEventTypes,
+              },
+            }),
+          ],
+        });
+      });
+
+      await writeLatchWorkerHeartbeat({
+        ...runtime,
+        state: 'idle',
+        lastCompletedTaskId: task.id,
+        lastErrorCode: failureCode,
+        lastErrorMessage: failureMessage,
+      });
+
+      return {
+        id: task.id,
+        status: LatchTaskStatus.failed,
+        agentStatus: response.status,
+      };
+    }
+
     await prisma.$transaction(async (tx) => {
+      const persisted = await persistLatchPreparationResult(tx, {
+        taskId: task.id,
+        applicationId: task.applicationId,
+        taskRequest,
+        response,
+      });
+
       await tx.latchTask.update({
         where: { id: task.id },
         data: {
@@ -232,6 +316,13 @@ export async function processNextLatchTask(options?: { workerLabel?: string }) {
             taskType: task.taskType,
             agentStatus: response.status,
             summary: response.summary,
+            persistedAnswerCount: persisted.persistedAnswerCount,
+            resumeAttachmentId: persisted.resumeAttachmentId,
+            resumeAttachmentAction: persisted.resumeAttachmentAction,
+            portalSessionId: persisted.portalSessionId,
+            portalTrackingPersisted: persisted.portalTrackingPersisted,
+            completionPercent: persisted.persistedReadiness.completionPercent,
+            missingRequiredCount: persisted.persistedReadiness.missingRequiredCount,
           },
         }),
       });
@@ -241,6 +332,8 @@ export async function processNextLatchTask(options?: { workerLabel?: string }) {
       ...runtime,
       state: 'idle',
       lastCompletedTaskId: task.id,
+      lastErrorCode: null,
+      lastErrorMessage: null,
     });
 
     return {
@@ -374,7 +467,687 @@ export async function getActiveLatchTaskForApplication(applicationId: string) {
   });
 }
 
-function buildPrepareApplicationWorkspaceRequest(args: {
+async function persistLatchPreparationResult(
+  tx: Prisma.TransactionClient,
+  args: {
+    taskId: string;
+    applicationId: string;
+    taskRequest: LatchTaskRequest;
+    response: LatchAgentResponse;
+  },
+) {
+  for (const answer of args.response.preparedAnswers) {
+    await tx.applicationAnswer.upsert({
+      where: {
+        applicationId_fieldKey: {
+          applicationId: args.applicationId,
+          fieldKey: answer.fieldKey,
+        },
+      },
+      update: {
+        fieldLabel: answer.fieldLabel,
+        fieldGroup: answer.fieldGroup ?? null,
+        answerJson: buildApplicationAnswerJson(answer),
+        sourceType: mapPreparedAnswerSourceType(answer.sourceType),
+        confidence: answer.confidence ?? null,
+        reviewState: mapPreparedAnswerReviewState(answer.reviewState),
+      },
+      create: {
+        applicationId: args.applicationId,
+        fieldKey: answer.fieldKey,
+        fieldLabel: answer.fieldLabel,
+        fieldGroup: answer.fieldGroup ?? null,
+        answerJson: buildApplicationAnswerJson(answer),
+        sourceType: mapPreparedAnswerSourceType(answer.sourceType),
+        confidence: answer.confidence ?? null,
+        reviewState: mapPreparedAnswerReviewState(answer.reviewState),
+      },
+    });
+  }
+
+  const resumeAttachment = await persistResumeAttachment(tx, args);
+  const portalTracking = await persistPortalTracking(tx, args);
+
+  if (portalTracking.persisted && (portalTracking.launchUrl || portalTracking.providerDomain)) {
+    await tx.application.update({
+      where: { id: args.applicationId },
+      data: {
+        ...(portalTracking.launchUrl ? { portalUrl: portalTracking.launchUrl } : {}),
+        ...(portalTracking.providerDomain ? { portalDomain: portalTracking.providerDomain } : {}),
+      },
+    });
+  }
+
+  const persistedReadiness = await syncApplicationReadiness(tx, args.applicationId);
+
+  const auditEvents = [] as Prisma.AuditEventCreateManyInput[];
+
+  if (args.response.preparedAnswers.length > 0) {
+    auditEvents.push(
+      makeAuditEvent({
+        entityType: 'application',
+        entityId: args.applicationId,
+        eventType: 'latch.answers_reconciled',
+        actorType: ActorType.agent,
+        actorLabel: args.taskRequest.boundary.agentId,
+        payloadJson: {
+          latchTaskId: args.taskId,
+          fieldKeys: args.response.preparedAnswers.map((answer) => answer.fieldKey),
+          answerCount: args.response.preparedAnswers.length,
+          responseStatus: args.response.status,
+          sourceTypeCounts: countBy(args.response.preparedAnswers.map((answer) => answer.sourceType)),
+          persistedSourceTypeCounts: countBy(
+            args.response.preparedAnswers.map((answer) => mapPreparedAnswerSourceType(answer.sourceType)),
+          ),
+          reviewStateCounts: countBy(args.response.preparedAnswers.map((answer) => answer.reviewState)),
+          emittedEventTypes: args.response.audit.emittedEventTypes,
+        },
+      }),
+    );
+  }
+
+  auditEvents.push(
+    makeAuditEvent({
+      entityType: 'application',
+      entityId: args.applicationId,
+      eventType: 'latch.workspace_prepared',
+      actorType: ActorType.agent,
+      actorLabel: args.taskRequest.boundary.agentId,
+      payloadJson: {
+        latchTaskId: args.taskId,
+        status: args.response.status,
+        summary: args.response.summary,
+        responseReadiness: args.response.readiness,
+        persistedReadiness,
+        selectedResumeVersionId: args.response.selectedResumeVersionId,
+        attachedResumeVersionId: args.response.attachedResumeVersionId,
+        resumeAttachment,
+        portalTracking: args.response.portalTracking,
+        browserAutomation: args.response.browserAutomation,
+        humanBoundary: args.response.humanBoundary,
+        emittedEventTypes: args.response.audit.emittedEventTypes,
+      },
+    }),
+  );
+
+  if (args.response.attachedResumeVersionId || resumeAttachment.reason) {
+    auditEvents.push(
+      makeAuditEvent({
+        entityType: 'application',
+        entityId: args.applicationId,
+        eventType: 'latch.resume_attachment_reconciled',
+        actorType: ActorType.agent,
+        actorLabel: args.taskRequest.boundary.agentId,
+        payloadJson: {
+          latchTaskId: args.taskId,
+          selectedResumeVersionId: args.response.selectedResumeVersionId,
+          attachedResumeVersionId: args.response.attachedResumeVersionId,
+          attachmentId: resumeAttachment.attachmentId,
+          action: resumeAttachment.action,
+          reason: resumeAttachment.reason,
+          fileUrl: resumeAttachment.fileUrl,
+          filename: resumeAttachment.filename,
+        },
+      }),
+    );
+  }
+
+  if (args.response.portalTracking.tracked || portalTracking.reason) {
+    auditEvents.push(
+      makeAuditEvent({
+        entityType: 'application',
+        entityId: args.applicationId,
+        eventType: 'latch.portal_tracking_reconciled',
+        actorType: ActorType.agent,
+        actorLabel: args.taskRequest.boundary.agentId,
+        payloadJson: {
+          latchTaskId: args.taskId,
+          tracked: args.response.portalTracking.tracked,
+          persisted: portalTracking.persisted,
+          portalSessionId: portalTracking.portalSessionId,
+          reason: portalTracking.reason,
+          launchUrl: portalTracking.launchUrl,
+          providerDomain: portalTracking.providerDomain,
+          mode: args.response.portalTracking.mode ?? args.taskRequest.existingPortalContext?.mode ?? null,
+          status: args.response.portalTracking.status ?? args.taskRequest.existingPortalContext?.status ?? null,
+        },
+      }),
+    );
+  }
+
+  await tx.auditEvent.createMany({ data: auditEvents });
+
+  return {
+    persistedAnswerCount: args.response.preparedAnswers.length,
+    resumeAttachmentId: resumeAttachment.attachmentId,
+    resumeAttachmentAction: resumeAttachment.action,
+    portalSessionId: portalTracking.portalSessionId,
+    portalTrackingPersisted: portalTracking.persisted,
+    persistedReadiness,
+  };
+}
+
+type ResumeAttachmentPersistencePlan =
+  | {
+      action: 'none';
+      reason:
+        | 'missing_attached_resume_version'
+        | 'resume_version_not_found'
+        | 'resume_artifact_url_missing'
+        | 'conflicting_attachment_for_artifact';
+      attachmentId: null;
+      fileUrl: null;
+      filename: null;
+    }
+  | {
+      action: 'existing';
+      reason: 'already_present';
+      attachmentId: string;
+      fileUrl: string | null;
+      filename: string | null;
+    }
+  | {
+      action: 'update';
+      reason: 'normalize_existing_attachment' | 'bind_artifact_to_existing_attachment';
+      attachmentId: string;
+      data: {
+        resumeVersionId: string;
+        fileUrl: string;
+        filename: string;
+      };
+      fileUrl: string;
+      filename: string;
+    }
+  | {
+      action: 'create';
+      reason: 'create_missing_attachment';
+      attachmentId: null;
+      data: {
+        resumeVersionId: string;
+        fileUrl: string;
+        filename: string;
+      };
+      fileUrl: string;
+      filename: string;
+    };
+
+export function buildResumeAttachmentPersistencePlan(args: {
+  attachedResumeVersionId: string | null;
+  existingAttachments: Array<{
+    id: string;
+    resumeVersionId: string | null;
+    fileUrl: string;
+    filename: string;
+  }>;
+  resumeVersion: {
+    id: string;
+    title: string;
+    renderedPdfUrl: string | null;
+    renderedDocxUrl: string | null;
+  } | null;
+}): ResumeAttachmentPersistencePlan {
+  if (!args.attachedResumeVersionId) {
+    return {
+      action: 'none',
+      reason: 'missing_attached_resume_version',
+      attachmentId: null,
+      fileUrl: null,
+      filename: null,
+    };
+  }
+
+  const existingByVersion = args.existingAttachments.find(
+    (attachment) => attachment.resumeVersionId === args.attachedResumeVersionId,
+  );
+
+  if (!args.resumeVersion) {
+    if (existingByVersion) {
+      return {
+        action: 'existing',
+        reason: 'already_present',
+        attachmentId: existingByVersion.id,
+        fileUrl: existingByVersion.fileUrl,
+        filename: existingByVersion.filename,
+      };
+    }
+
+    return {
+      action: 'none',
+      reason: 'resume_version_not_found',
+      attachmentId: null,
+      fileUrl: null,
+      filename: null,
+    };
+  }
+
+  const artifactUrl = pickResumeArtifactUrl(args.resumeVersion);
+  if (!artifactUrl) {
+    if (existingByVersion) {
+      return {
+        action: 'existing',
+        reason: 'already_present',
+        attachmentId: existingByVersion.id,
+        fileUrl: existingByVersion.fileUrl,
+        filename: existingByVersion.filename,
+      };
+    }
+
+    return {
+      action: 'none',
+      reason: 'resume_artifact_url_missing',
+      attachmentId: null,
+      fileUrl: null,
+      filename: null,
+    };
+  }
+
+  const filename = deriveResumeAttachmentFilename(artifactUrl, args.resumeVersion.title);
+
+  if (existingByVersion) {
+    if (existingByVersion.fileUrl === artifactUrl && existingByVersion.filename === filename) {
+      return {
+        action: 'existing',
+        reason: 'already_present',
+        attachmentId: existingByVersion.id,
+        fileUrl: existingByVersion.fileUrl,
+        filename: existingByVersion.filename,
+      };
+    }
+
+    return {
+      action: 'update',
+      reason: 'normalize_existing_attachment',
+      attachmentId: existingByVersion.id,
+      data: {
+        resumeVersionId: args.attachedResumeVersionId,
+        fileUrl: artifactUrl,
+        filename,
+      },
+      fileUrl: artifactUrl,
+      filename,
+    };
+  }
+
+  const existingByArtifact = args.existingAttachments.find((attachment) => attachment.fileUrl === artifactUrl);
+  if (existingByArtifact) {
+    if (existingByArtifact.resumeVersionId && existingByArtifact.resumeVersionId !== args.attachedResumeVersionId) {
+      return {
+        action: 'none',
+        reason: 'conflicting_attachment_for_artifact',
+        attachmentId: null,
+        fileUrl: null,
+        filename: null,
+      };
+    }
+
+    if (
+      existingByArtifact.resumeVersionId === args.attachedResumeVersionId &&
+      existingByArtifact.filename === filename
+    ) {
+      return {
+        action: 'existing',
+        reason: 'already_present',
+        attachmentId: existingByArtifact.id,
+        fileUrl: existingByArtifact.fileUrl,
+        filename: existingByArtifact.filename,
+      };
+    }
+
+    return {
+      action: 'update',
+      reason: 'bind_artifact_to_existing_attachment',
+      attachmentId: existingByArtifact.id,
+      data: {
+        resumeVersionId: args.attachedResumeVersionId,
+        fileUrl: artifactUrl,
+        filename,
+      },
+      fileUrl: artifactUrl,
+      filename,
+    };
+  }
+
+  return {
+    action: 'create',
+    reason: 'create_missing_attachment',
+    attachmentId: null,
+    data: {
+      resumeVersionId: args.attachedResumeVersionId,
+      fileUrl: artifactUrl,
+      filename,
+    },
+    fileUrl: artifactUrl,
+    filename,
+  };
+}
+
+async function persistResumeAttachment(
+  tx: Prisma.TransactionClient,
+  args: {
+    taskId: string;
+    applicationId: string;
+    taskRequest: LatchTaskRequest;
+    response: LatchAgentResponse;
+  },
+) {
+  const existingAttachments = await tx.applicationAttachment.findMany({
+    where: {
+      applicationId: args.applicationId,
+      attachmentType: 'resume',
+    },
+    select: {
+      id: true,
+      resumeVersionId: true,
+      fileUrl: true,
+      filename: true,
+    },
+  });
+
+  const attachedResumeVersionId = args.response.attachedResumeVersionId;
+  const resumeVersion = attachedResumeVersionId
+    ? await tx.resumeVersion.findUnique({
+        where: { id: attachedResumeVersionId },
+        select: {
+          id: true,
+          title: true,
+          renderedPdfUrl: true,
+          renderedDocxUrl: true,
+        },
+      })
+    : null;
+
+  const plan = buildResumeAttachmentPersistencePlan({
+    attachedResumeVersionId,
+    existingAttachments,
+    resumeVersion,
+  });
+
+  if (plan.action === 'none' || plan.action === 'existing') {
+    return {
+      attachmentId: plan.attachmentId,
+      action: plan.action,
+      reason: plan.reason,
+      fileUrl: plan.fileUrl,
+      filename: plan.filename,
+    };
+  }
+
+  if (plan.action === 'update') {
+    const attachment = await tx.applicationAttachment.update({
+      where: { id: plan.attachmentId },
+      data: {
+        attachmentType: 'resume',
+        resumeVersionId: plan.data.resumeVersionId,
+        fileUrl: plan.data.fileUrl,
+        filename: plan.data.filename,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    return {
+      attachmentId: attachment.id,
+      action: plan.action,
+      reason: plan.reason,
+      fileUrl: plan.fileUrl,
+      filename: plan.filename,
+    };
+  }
+
+  const attachment = await tx.applicationAttachment.create({
+    data: {
+      applicationId: args.applicationId,
+      attachmentType: 'resume',
+      resumeVersionId: plan.data.resumeVersionId,
+      fileUrl: plan.data.fileUrl,
+      filename: plan.data.filename,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  return {
+    attachmentId: attachment.id,
+    action: plan.action,
+    reason: plan.reason,
+    fileUrl: plan.fileUrl,
+    filename: plan.filename,
+  };
+}
+
+async function syncApplicationReadiness(tx: Prisma.TransactionClient, applicationId: string) {
+  const application = await tx.application.findUnique({
+    where: { id: applicationId },
+    include: {
+      answers: true,
+      attachments: true,
+      portalSessions: {
+        orderBy: [{ lastSyncedAt: 'desc' }, { id: 'desc' }],
+      },
+    },
+  });
+
+  if (!application) {
+    throw new Error(`Application not found while syncing Latch readiness: ${applicationId}`);
+  }
+
+  const readiness = evaluateApplicationReadiness({
+    status: application.status,
+    tailoredResumeVersionId: application.tailoredResumeVersionId,
+    answers: application.answers,
+    attachments: application.attachments,
+    portalSessions: application.portalSessions,
+  });
+
+  await tx.application.update({
+    where: { id: applicationId },
+    data: {
+      completionPercent: readiness.completionPercent,
+      missingRequiredCount: readiness.missingRequiredCount,
+      lowConfidenceCount: readiness.lowConfidenceCount,
+    },
+  });
+
+  return readiness;
+}
+
+function pickResumeArtifactUrl(resumeVersion: {
+  renderedPdfUrl: string | null;
+  renderedDocxUrl: string | null;
+}) {
+  return resumeVersion.renderedPdfUrl?.trim() || resumeVersion.renderedDocxUrl?.trim() || null;
+}
+
+function deriveResumeAttachmentFilename(fileUrl: string, title: string) {
+  const fallbackBase = slugifyFilename(title || 'resume');
+  const fallbackExtension = fileUrl.toLowerCase().includes('.docx') ? '.docx' : '.pdf';
+
+  try {
+    const parsed = new URL(fileUrl);
+    const lastSegment = parsed.pathname.split('/').filter(Boolean).at(-1)?.trim();
+    if (lastSegment) {
+      return lastSegment;
+    }
+  } catch {
+    const lastSegment = fileUrl.split('/').filter(Boolean).at(-1)?.trim();
+    if (lastSegment) {
+      return lastSegment;
+    }
+  }
+
+  return `${fallbackBase}${fallbackExtension}`;
+}
+
+function slugifyFilename(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/(^-|-$)/g, '') || 'resume';
+}
+
+async function persistPortalTracking(
+  tx: Prisma.TransactionClient,
+  args: {
+    taskId: string;
+    applicationId: string;
+    taskRequest: LatchTaskRequest;
+    response: LatchAgentResponse;
+  },
+) {
+  if (!args.response.portalTracking.tracked) {
+    return {
+      portalSessionId: null,
+      persisted: false,
+      reason: null,
+      launchUrl: null,
+      providerDomain: null,
+    };
+  }
+
+  const launchUrl = args.taskRequest.existingPortalContext?.launchUrl?.trim() || null;
+  const providerDomain = args.taskRequest.existingPortalContext?.providerDomain?.trim() || null;
+
+  if (!launchUrl || !providerDomain) {
+    return {
+      portalSessionId: null,
+      persisted: false,
+      reason: 'tracked_without_launch_url_or_provider_domain',
+      launchUrl,
+      providerDomain,
+    };
+  }
+
+  const latestPortalSession = await tx.portalSession.findFirst({
+    where: { applicationId: args.applicationId },
+    orderBy: [{ lastSyncedAt: 'desc' }, { id: 'desc' }],
+    select: {
+      id: true,
+      launchUrl: true,
+      providerDomain: true,
+      mode: true,
+      status: true,
+    },
+  });
+
+  const mode =
+    args.response.portalTracking.mode ??
+    args.taskRequest.existingPortalContext?.mode ??
+    latestPortalSession?.mode ??
+    PortalSessionMode.manual;
+  const status =
+    args.response.portalTracking.status ??
+    args.taskRequest.existingPortalContext?.status ??
+    latestPortalSession?.status ??
+    PortalSessionStatus.not_started;
+
+  const sessionSummaryJson = toJsonValue({
+    source: 'latch-agent-response',
+    latchTaskId: args.taskId,
+    tracked: args.response.portalTracking.tracked,
+    summary: args.response.summary,
+    readiness: args.response.readiness,
+    emittedEventTypes: args.response.audit.emittedEventTypes,
+  });
+
+  if (
+    latestPortalSession &&
+    latestPortalSession.launchUrl === launchUrl &&
+    latestPortalSession.providerDomain === providerDomain
+  ) {
+    await tx.portalSession.update({
+      where: { id: latestPortalSession.id },
+      data: {
+        mode,
+        status,
+        lastSyncedAt: new Date(),
+        sessionSummaryJson,
+      },
+    });
+
+    return {
+      portalSessionId: latestPortalSession.id,
+      persisted: true,
+      reason: null,
+      launchUrl,
+      providerDomain,
+    };
+  }
+
+  const portalSession = await tx.portalSession.create({
+    data: {
+      applicationId: args.applicationId,
+      mode,
+      status,
+      launchUrl,
+      providerDomain,
+      lastSyncedAt: new Date(),
+      sessionSummaryJson,
+      notes: 'Persisted from Latch application-ops response.',
+    },
+  });
+
+  return {
+    portalSessionId: portalSession.id,
+    persisted: true,
+    reason: null,
+    launchUrl,
+    providerDomain,
+  };
+}
+
+function buildApplicationAnswerJson(answer: LatchPreparedAnswer): Prisma.InputJsonValue {
+  return toJsonValue({
+    value: answer.value ?? null,
+    required: answer.required,
+    sourceType: answer.sourceType,
+    confidenceBand: answer.confidenceBand,
+    provenance: answer.provenance,
+    notes: answer.notes,
+  });
+}
+
+function mapPreparedAnswerSourceType(sourceType: LatchPreparedAnswer['sourceType']) {
+  switch (sourceType) {
+    case 'manual':
+      return AnswerSourceType.manual;
+    case 'agent':
+      return AnswerSourceType.agent;
+    case 'resume':
+      return AnswerSourceType.resume;
+    case 'derived':
+      return AnswerSourceType.derived;
+    case 'profile':
+    case 'portal_detected':
+      return AnswerSourceType.derived;
+    default:
+      return AnswerSourceType.agent;
+  }
+}
+
+function mapPreparedAnswerReviewState(reviewState: LatchPreparedAnswer['reviewState']) {
+  switch (reviewState) {
+    case 'accepted':
+      return AnswerReviewState.accepted;
+    case 'needs_review':
+      return AnswerReviewState.needs_review;
+    case 'blocked':
+      return AnswerReviewState.blocked;
+    default:
+      return AnswerReviewState.needs_review;
+  }
+}
+
+function countBy(values: string[]) {
+  return values.reduce<Record<string, number>>((accumulator, value) => {
+    accumulator[value] = (accumulator[value] ?? 0) + 1;
+    return accumulator;
+  }, {});
+}
+
+export function buildPrepareApplicationWorkspaceRequest(args: {
   applicationId: string;
   jobId: string;
   tailoredResumeVersionId: string;

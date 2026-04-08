@@ -13,10 +13,11 @@ Current boundary:
 - queue + heartbeat + DB/audit wiring are real
 - the final OpenClaw bridge is **not** implemented yet
 
-That means a healthy smoke test can still end in:
-- `failureCode = "latch_agent_not_implemented"`
+That means a healthy smoke test may currently end in either:
+- a typed bridge-stage failure such as `latch_agent_not_implemented`, `latch_agent_gateway_failed`, or `latch_agent_timeout`
+- or a typed completed/blocked response if the real `application-ops` bridge is already wired on your branch
 
-That failure is useful right now. It proves:
+Even an expected bridge-stage failure is useful right now. It proves:
 - the task was enqueued correctly
 - the worker claimed it
 - the runtime reached the Latch boundary
@@ -148,6 +149,31 @@ Useful for checking:
 
 ## Recommended smoke test
 
+### One-command smoke
+
+If you already have an application in `applying`, run:
+
+```bash
+npm run latch:smoke:local -- --applicationId=<applicationId>
+```
+
+Optional overrides:
+
+```bash
+npm run latch:smoke:local -- --applicationId=<applicationId> --approvedTailoringRunId=<tailoringRunId>
+npm run latch:smoke:local -- --applicationId=<applicationId> --actorLabel=operator:smoke-test
+npm run latch:smoke:local -- --applicationId=<applicationId> --skipMigrate
+```
+
+The script will:
+- apply migrations unless `--skipMigrate` is set
+- enqueue the current `prepare_application_workspace` task
+- drain the queue once
+- print application status with payloads
+- print recent queue state
+
+### Manual step-by-step smoke
+
 1. Confirm the app is in `applying` and has an approved tailoring run.
 2. Queue a manual task:
 
@@ -167,11 +193,14 @@ npm run latch:queue:once:local
 npm run latch:ops:local -- status --applicationId=<applicationId> --includePayloads
 ```
 
-Current expected result:
-- task moves `queued -> processing -> failed`
-- `failureCode` is `latch_agent_not_implemented`
+Current success criteria:
+- task moves out of `queued` and is claimed by the worker
 - heartbeat updates and points at the worker/runtime that processed it
-- audit trail shows queue and failure events
+- audit trail shows queue plus completion or failure events
+- request payload keeps `boundary.agentId = "application-ops"` and `intent = "prepare_application_workspace"`
+- terminal result is explainable:
+  - either a typed bridge-stage failure while the real lane is still landing
+  - or a typed `completed` / `blocked` response from `application-ops`
 
 ## If something looks wrong
 

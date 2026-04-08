@@ -87,6 +87,26 @@ function buildResumeArtifactPath(resumeVersionId: string) {
   return `/api/resume-artifacts/${resumeVersionId}`;
 }
 
+type ApproveTailoringRunPrismaClient = Pick<typeof prisma, '$transaction' | 'tailoringRun' | 'resumeVersion'>;
+
+export type ApproveTailoringRunForApplicationDependencies = {
+  now: () => Date;
+  loadApplicationContext: typeof loadApplicationContext;
+  prismaClient: ApproveTailoringRunPrismaClient;
+  enqueuePrepareApplicationWorkspace: typeof enqueuePrepareApplicationWorkspace;
+  buildResumeArtifactFilename: typeof buildResumeArtifactFilename;
+  buildResumeArtifactPath: typeof buildResumeArtifactPath;
+};
+
+const defaultApproveTailoringRunForApplicationDependencies: ApproveTailoringRunForApplicationDependencies = {
+  now: () => new Date(),
+  loadApplicationContext,
+  prismaClient: prisma,
+  enqueuePrepareApplicationWorkspace,
+  buildResumeArtifactFilename,
+  buildResumeArtifactPath,
+};
+
 async function loadApplicationContext(applicationId: string) {
   const application = await prisma.application.findUnique({
     where: { id: applicationId },
@@ -948,10 +968,19 @@ export async function approveTailoringRunForApplication(
   tailoringRunId: string,
   options?: { actorLabel?: string },
 ) {
+  return approveTailoringRunForApplicationWithDependencies(applicationId, tailoringRunId, options);
+}
+
+export async function approveTailoringRunForApplicationWithDependencies(
+  applicationId: string,
+  tailoringRunId: string,
+  options: { actorLabel?: string } | undefined,
+  dependencies: ApproveTailoringRunForApplicationDependencies = defaultApproveTailoringRunForApplicationDependencies,
+) {
   const actorLabel = options?.actorLabel ?? 'needle';
-  const approvedAt = new Date();
-  const application = await loadApplicationContext(applicationId);
-  const run = await prisma.tailoringRun.findUnique({ where: { id: tailoringRunId } });
+  const approvedAt = dependencies.now();
+  const application = await dependencies.loadApplicationContext(applicationId);
+  const run = await dependencies.prismaClient.tailoringRun.findUnique({ where: { id: tailoringRunId } });
 
   if (!run || run.applicationId !== application.id) {
     throw new Error(`Tailoring run not found for application: ${tailoringRunId}`);
@@ -966,7 +995,7 @@ export async function approveTailoringRunForApplication(
     assertApplicationTransition(application.status as DomainApplicationStatus, ApplicationStatus.applying as DomainApplicationStatus);
   }
 
-  const approvedResume = await prisma.resumeVersion.findUnique({
+  const approvedResume = await dependencies.prismaClient.resumeVersion.findUnique({
     where: { id: run.outputResumeVersionId },
     select: { id: true, title: true },
   });
@@ -975,10 +1004,10 @@ export async function approveTailoringRunForApplication(
     throw new Error(`Approved resume version not found: ${run.outputResumeVersionId}`);
   }
 
-  const artifactFilename = buildResumeArtifactFilename(approvedResume.title, 'pdf');
-  const artifactPath = buildResumeArtifactPath(approvedResume.id);
+  const artifactFilename = dependencies.buildResumeArtifactFilename(approvedResume.title, 'pdf');
+  const artifactPath = dependencies.buildResumeArtifactPath(approvedResume.id);
 
-  return prisma.$transaction(async (tx) => {
+  return dependencies.prismaClient.$transaction(async (tx) => {
     await tx.tailoringRun.update({
       where: { id: run.id },
       data: { status: 'approved' },
@@ -1017,7 +1046,7 @@ export async function approveTailoringRunForApplication(
       },
     });
 
-    const latchTask = await enqueuePrepareApplicationWorkspace(application.id, run.id, {
+    const latchTask = await dependencies.enqueuePrepareApplicationWorkspace(application.id, run.id, {
       actorLabel,
       approvedAt,
       tx,

@@ -2,6 +2,8 @@ export * from './latch';
 
 import { z } from 'zod';
 
+import { latchTaskStatusSchema as latchAgentTaskStatusSchema } from './latch';
+
 export const provenanceSchema = z
   .object({
     sourceKey: z.string(),
@@ -218,6 +220,43 @@ export const needleTaskSummarySchema = z.object({
   completedAt: z.string().nullable(),
 });
 
+export const latchWorkspacePrepStateSchema = z.enum([
+  'not_started',
+  'queued',
+  'processing',
+  'failed',
+  'prepared',
+]);
+
+export const latchTaskSummarySchema = z.object({
+  id: z.string(),
+  taskType: z.enum(['prepare_application_workspace']),
+  status: z.enum(['queued', 'processing', 'completed', 'failed', 'cancelled']),
+  requestedByLabel: z.string(),
+  workerLabel: z.string().nullable(),
+  failureCode: z.string().nullable(),
+  failureMessage: z.string().nullable(),
+  responseStatus: latchAgentTaskStatusSchema.nullable().optional(),
+  responseSummary: z.string().nullable().optional(),
+  createdAt: z.string(),
+  startedAt: z.string().nullable(),
+  completedAt: z.string().nullable(),
+});
+
+export const latchWorkerHeartbeatSummarySchema = z.object({
+  workerLabel: z.string(),
+  state: z.string(),
+  freshness: z.enum(['fresh', 'delayed', 'stale']),
+  ageSeconds: z.number().int().nonnegative(),
+  updatedAt: z.string(),
+  currentTaskId: z.string().nullable(),
+  currentTaskType: z.string().nullable(),
+  lastClaimedTaskId: z.string().nullable(),
+  lastCompletedTaskId: z.string().nullable(),
+  lastErrorCode: z.string().nullable(),
+  lastErrorMessage: z.string().nullable(),
+});
+
 export const readinessIssueSchema = z.object({
   code: z.string(),
   level: z.string(),
@@ -338,6 +377,10 @@ export const applicationDetailSchema = z.object({
   completionPercent: z.number(),
   missingRequiredCount: z.number(),
   lowConfidenceCount: z.number(),
+  workspacePrepState: latchWorkspacePrepStateSchema,
+  activeLatchTask: latchTaskSummarySchema.nullable(),
+  latestLatchTask: latchTaskSummarySchema.nullable(),
+  latchWorker: latchWorkerHeartbeatSummarySchema.nullable(),
   readiness: readinessSummarySchema,
   job: z.object({
     id: z.string(),
@@ -362,6 +405,10 @@ export const applyingQueueItemSchema = z.object({
   missingRequiredCount: z.number(),
   lowConfidenceCount: z.number(),
   hasHardBlockers: z.boolean(),
+  workspacePrepState: latchWorkspacePrepStateSchema,
+  activeLatchTask: latchTaskSummarySchema.nullable(),
+  latestLatchTask: latchTaskSummarySchema.nullable(),
+  latchWorker: latchWorkerHeartbeatSummarySchema.nullable(),
   selectedTailoredResumeTitle: z.string().nullable(),
   jobTitle: z.string(),
   companyName: z.string(),
@@ -428,6 +475,9 @@ export type NeedleAgentResponse = z.infer<typeof needleAgentResponseSchema>;
 export type TailoringRunSummary = z.infer<typeof tailoringRunSummarySchema>;
 export type TailoringRunWorkspaceItem = z.infer<typeof tailoringRunWorkspaceItemSchema>;
 export type NeedleTaskSummary = z.infer<typeof needleTaskSummarySchema>;
+export type LatchWorkspacePrepState = z.infer<typeof latchWorkspacePrepStateSchema>;
+export type LatchTaskSummary = z.infer<typeof latchTaskSummarySchema>;
+export type LatchWorkerHeartbeatSummary = z.infer<typeof latchWorkerHeartbeatSummarySchema>;
 export type ReadinessIssue = z.infer<typeof readinessIssueSchema>;
 export type ReadinessSummary = z.infer<typeof readinessSummarySchema>;
 export type ApplicationAnswerItem = z.infer<typeof applicationAnswerItemSchema>;

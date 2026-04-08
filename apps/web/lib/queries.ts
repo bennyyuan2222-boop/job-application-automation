@@ -3,8 +3,11 @@ import {
   applyingQueueItemSchema,
   auditEventItemSchema,
   jobListItemSchema,
-  resumeVersionDetailSchema,
+  latchAgentResponseSchema,
+  latchTaskSummarySchema,
+  latchWorkerHeartbeatSummarySchema,
   needleTaskSummarySchema,
+  resumeVersionDetailSchema,
   tailoringBaseSelectionSchema,
   tailoringDetailSchema,
   tailoringFitAssessmentSchema,
@@ -17,6 +20,9 @@ import {
   type ApplyingQueueItem,
   type AuditEventItem,
   type JobListItem,
+  type LatchTaskSummary,
+  type LatchWorkerHeartbeatSummary,
+  type LatchWorkspacePrepState,
   type ResumeVersionDetail,
   type TailoringDetail,
   type TailoringQueueItem,
@@ -230,6 +236,125 @@ function mapNeedleTaskSummary(task: {
   });
 }
 
+const LATCH_WORKER_HEARTBEAT_FRESH_MS = parseInteger(process.env.LATCH_WORKER_HEARTBEAT_FRESH_MS, 20_000);
+const LATCH_WORKER_HEARTBEAT_DELAYED_MS = parseInteger(
+  process.env.LATCH_WORKER_HEARTBEAT_DELAYED_MS,
+  LATCH_WORKER_HEARTBEAT_FRESH_MS * 3,
+);
+
+function asLatchAgentResponse(value: unknown) {
+  const parsed = latchAgentResponseSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function mapLatchTaskSummary(task: {
+  id: string;
+  taskType: string;
+  status: string;
+  requestedByLabel: string;
+  workerLabel: string | null;
+  failureCode: string | null;
+  failureMessage: string | null;
+  responsePayloadJson?: unknown;
+  createdAt: Date;
+  startedAt: Date | null;
+  completedAt: Date | null;
+}): LatchTaskSummary {
+  const response = asLatchAgentResponse(task.responsePayloadJson);
+
+  return latchTaskSummarySchema.parse({
+    id: task.id,
+    taskType: task.taskType,
+    status: task.status,
+    requestedByLabel: task.requestedByLabel,
+    workerLabel: task.workerLabel,
+    failureCode: task.failureCode,
+    failureMessage: task.failureMessage,
+    responseStatus: response?.status ?? null,
+    responseSummary: response?.summary ?? null,
+    createdAt: task.createdAt.toISOString(),
+    startedAt: task.startedAt ? task.startedAt.toISOString() : null,
+    completedAt: task.completedAt ? task.completedAt.toISOString() : null,
+  });
+}
+
+function mapLatchWorkerHeartbeatSummary(heartbeat: {
+  workerLabel: string;
+  state: string;
+  currentTaskId: string | null;
+  currentTaskType: string | null;
+  lastClaimedTaskId: string | null;
+  lastCompletedTaskId: string | null;
+  lastErrorCode: string | null;
+  lastErrorMessage: string | null;
+  updatedAt: Date;
+}): LatchWorkerHeartbeatSummary {
+  const ageSeconds = Math.max(0, Math.floor((Date.now() - heartbeat.updatedAt.getTime()) / 1000));
+  const ageMs = ageSeconds * 1000;
+  const freshness = ageMs <= LATCH_WORKER_HEARTBEAT_FRESH_MS ? 'fresh' : ageMs <= LATCH_WORKER_HEARTBEAT_DELAYED_MS ? 'delayed' : 'stale';
+
+  return latchWorkerHeartbeatSummarySchema.parse({
+    workerLabel: heartbeat.workerLabel,
+    state: heartbeat.state,
+    freshness,
+    ageSeconds,
+    updatedAt: heartbeat.updatedAt.toISOString(),
+    currentTaskId: heartbeat.currentTaskId,
+    currentTaskType: heartbeat.currentTaskType,
+    lastClaimedTaskId: heartbeat.lastClaimedTaskId,
+    lastCompletedTaskId: heartbeat.lastCompletedTaskId,
+    lastErrorCode: heartbeat.lastErrorCode,
+    lastErrorMessage: heartbeat.lastErrorMessage,
+  });
+}
+
+function pickLatchWorkerSummary(args: {
+  heartbeatsByWorker: Map<string, LatchWorkerHeartbeatSummary>;
+  latestHeartbeat: LatchWorkerHeartbeatSummary | null;
+  workerLabel?: string | null;
+}) {
+  if (args.workerLabel) {
+    const matching = args.heartbeatsByWorker.get(args.workerLabel);
+    if (matching) {
+      return matching;
+    }
+  }
+
+  return args.latestHeartbeat;
+}
+
+function getWorkspacePrepState(args: {
+  activeTask: LatchTaskSummary | null;
+  latestTask: LatchTaskSummary | null;
+}): LatchWorkspacePrepState {
+  if (args.activeTask?.status === 'queued') {
+    return 'queued';
+  }
+
+  if (args.activeTask?.status === 'processing') {
+    return 'processing';
+  }
+
+  if (args.latestTask?.status === 'failed' || args.latestTask?.status === 'cancelled') {
+    return 'failed';
+  }
+
+  if (args.latestTask?.status === 'completed') {
+    return 'prepared';
+  }
+
+  return 'not_started';
+}
+
+function parseInteger(value: string | undefined, fallback: number) {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 export async function getRecentAuditEvents(limit = 20): Promise<AuditEventItem[]> {
   const events = await prisma.auditEvent.findMany({
     orderBy: { createdAt: 'desc' },
@@ -283,9 +408,33 @@ async function getOperationalApplicationQueue(
       portalSessions: {
         orderBy: [{ lastSyncedAt: 'desc' }, { id: 'desc' }],
       },
+      latchTasks: {
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+      },
     },
     orderBy: { updatedAt: 'desc' },
   });
+
+  const heartbeats = await prisma.latchWorkerHeartbeat.findMany({
+    orderBy: { updatedAt: 'desc' },
+    take: 10,
+    select: {
+      workerLabel: true,
+      state: true,
+      currentTaskId: true,
+      currentTaskType: true,
+      lastClaimedTaskId: true,
+      lastCompletedTaskId: true,
+      lastErrorCode: true,
+      lastErrorMessage: true,
+      updatedAt: true,
+    },
+  });
+
+  const heartbeatSummaries = heartbeats.map((heartbeat) => mapLatchWorkerHeartbeatSummary(heartbeat));
+  const heartbeatsByWorker = new Map(heartbeatSummaries.map((heartbeat) => [heartbeat.workerLabel, heartbeat]));
+  const latestHeartbeat = heartbeatSummaries[0] ?? null;
 
   return applications.map((application) => {
     const readiness = evaluateApplicationReadiness({
@@ -294,6 +443,16 @@ async function getOperationalApplicationQueue(
       answers: application.answers,
       attachments: application.attachments,
       portalSessions: application.portalSessions,
+    });
+
+    const activeLatchTask = (() => {
+      const task = application.latchTasks.find((item) => item.status === 'queued' || item.status === 'processing');
+      return task ? mapLatchTaskSummary(task) : null;
+    })();
+    const latestLatchTask = application.latchTasks[0] ? mapLatchTaskSummary(application.latchTasks[0]) : null;
+    const workspacePrepState = getWorkspacePrepState({
+      activeTask: activeLatchTask,
+      latestTask: latestLatchTask,
     });
 
     return applyingQueueItemSchema.parse({
@@ -305,6 +464,14 @@ async function getOperationalApplicationQueue(
       missingRequiredCount: readiness.missingRequiredCount,
       lowConfidenceCount: readiness.lowConfidenceCount,
       hasHardBlockers: readiness.hardBlockers.length > 0,
+      workspacePrepState,
+      activeLatchTask: activeLatchTask,
+      latestLatchTask: latestLatchTask,
+      latchWorker: pickLatchWorkerSummary({
+        heartbeatsByWorker,
+        latestHeartbeat,
+        workerLabel: activeLatchTask?.workerLabel ?? latestLatchTask?.workerLabel,
+      }),
       selectedTailoredResumeTitle: application.tailoredResumeVersion?.title ?? null,
       jobTitle: application.job.title,
       companyName: application.job.company.name,
@@ -318,6 +485,25 @@ export async function getApplyingQueue(): Promise<ApplyingQueueItem[]> {
 
 export async function getSubmitReviewQueue(): Promise<ApplyingQueueItem[]> {
   return getOperationalApplicationQueue(['submit_review', 'submitted']);
+}
+
+export async function getLatestLatchWorkerHeartbeatSummary(): Promise<LatchWorkerHeartbeatSummary | null> {
+  const heartbeat = await prisma.latchWorkerHeartbeat.findFirst({
+    orderBy: { updatedAt: 'desc' },
+    select: {
+      workerLabel: true,
+      state: true,
+      currentTaskId: true,
+      currentTaskType: true,
+      lastClaimedTaskId: true,
+      lastCompletedTaskId: true,
+      lastErrorCode: true,
+      lastErrorMessage: true,
+      updatedAt: true,
+    },
+  });
+
+  return heartbeat ? mapLatchWorkerHeartbeatSummary(heartbeat) : null;
 }
 
 export async function getApplicationDetail(applicationId: string): Promise<ApplicationDetail | null> {
@@ -343,6 +529,10 @@ export async function getApplicationDetail(applicationId: string): Promise<Appli
       portalSessions: {
         orderBy: [{ lastSyncedAt: 'desc' }, { id: 'desc' }],
       },
+      latchTasks: {
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+      },
     },
   });
 
@@ -358,17 +548,43 @@ export async function getApplicationDetail(applicationId: string): Promise<Appli
     portalSessions: application.portalSessions,
   });
 
-  const auditEvents = await prisma.auditEvent.findMany({
-    where: {
-      OR: [
-        { entityType: 'application', entityId: application.id },
-        { entityType: 'job', entityId: application.jobId },
-        ...application.portalSessions.map((session) => ({ entityType: 'portal_session', entityId: session.id })),
-      ],
-    },
-    orderBy: { createdAt: 'desc' },
-    take: 20,
-  });
+  const [auditEvents, heartbeats] = await Promise.all([
+    prisma.auditEvent.findMany({
+      where: {
+        OR: [
+          { entityType: 'application', entityId: application.id },
+          { entityType: 'job', entityId: application.jobId },
+          ...application.portalSessions.map((session) => ({ entityType: 'portal_session', entityId: session.id })),
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    }),
+    prisma.latchWorkerHeartbeat.findMany({
+      orderBy: { updatedAt: 'desc' },
+      take: 10,
+      select: {
+        workerLabel: true,
+        state: true,
+        currentTaskId: true,
+        currentTaskType: true,
+        lastClaimedTaskId: true,
+        lastCompletedTaskId: true,
+        lastErrorCode: true,
+        lastErrorMessage: true,
+        updatedAt: true,
+      },
+    }),
+  ]);
+
+  const activeLatchTask = (() => {
+    const task = application.latchTasks.find((item) => item.status === 'queued' || item.status === 'processing');
+    return task ? mapLatchTaskSummary(task) : null;
+  })();
+  const latestLatchTask = application.latchTasks[0] ? mapLatchTaskSummary(application.latchTasks[0]) : null;
+  const heartbeatSummaries = heartbeats.map((heartbeat) => mapLatchWorkerHeartbeatSummary(heartbeat));
+  const heartbeatsByWorker = new Map(heartbeatSummaries.map((heartbeat) => [heartbeat.workerLabel, heartbeat]));
+  const latestHeartbeat = heartbeatSummaries[0] ?? null;
 
   return applicationDetailSchema.parse({
     id: application.id,
@@ -376,6 +592,17 @@ export async function getApplicationDetail(applicationId: string): Promise<Appli
     completionPercent: readiness.completionPercent,
     missingRequiredCount: readiness.missingRequiredCount,
     lowConfidenceCount: readiness.lowConfidenceCount,
+    workspacePrepState: getWorkspacePrepState({
+      activeTask: activeLatchTask,
+      latestTask: latestLatchTask,
+    }),
+    activeLatchTask: activeLatchTask,
+    latestLatchTask: latestLatchTask,
+    latchWorker: pickLatchWorkerSummary({
+      heartbeatsByWorker,
+      latestHeartbeat,
+      workerLabel: activeLatchTask?.workerLabel ?? latestLatchTask?.workerLabel,
+    }),
     readiness,
     job: {
       id: application.job.id,

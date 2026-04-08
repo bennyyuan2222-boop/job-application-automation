@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import { DEFAULT_LATCH_REVIEW_POLICY } from '@job-ops/contracts';
@@ -18,6 +20,86 @@ function loadJsonFixture<T>(name: string): T {
 
 const validRequestFixture = loadJsonFixture<Record<string, unknown>>('prepare-application-workspace.request.json');
 const validResponseFixture = loadJsonFixture<Record<string, unknown>>('prepare-application-workspace.response.completed.json');
+
+function writeOpenClawStub(
+  responsePayload: Record<string, unknown>,
+  options?: {
+    sessionGetResponses?: Array<{
+      messages: Array<{ role: string; seq: number; content: Array<{ type: string; text?: string }> }>;
+    }>;
+  },
+) {
+  const tempDir = mkdtempSync(join(tmpdir(), 'latch-agent-test-'));
+  const binaryPath = join(tempDir, 'openclaw');
+  const responseText = JSON.stringify(responsePayload);
+  const sessionGetResponses = options?.sessionGetResponses ?? [
+    {
+      messages: [
+        {
+          role: 'assistant',
+          seq: 8,
+          content: [{ type: 'text', text: responseText }],
+        },
+      ],
+    },
+  ];
+
+  writeFileSync(
+    binaryPath,
+    `#!/usr/bin/env node
+const { existsSync, readFileSync, writeFileSync } = require('node:fs');
+const args = process.argv.slice(2);
+const method = args[2];
+const paramsIndex = args.indexOf('--params');
+const params = paramsIndex === -1 ? {} : JSON.parse(args[paramsIndex + 1]);
+const statePath = ${JSON.stringify(join(tempDir, 'state.json'))};
+const sessionGetResponses = ${JSON.stringify(sessionGetResponses)};
+
+function nextSessionGetResponse() {
+  let state = { getCalls: 0 };
+  if (existsSync(statePath)) {
+    state = JSON.parse(readFileSync(statePath, 'utf8'));
+  }
+  const index = Math.min(state.getCalls, sessionGetResponses.length - 1);
+  const response = sessionGetResponses[index];
+  state.getCalls += 1;
+  writeFileSync(statePath, JSON.stringify(state));
+  return response;
+}
+
+if (method === 'sessions.create') {
+  process.stdout.write(JSON.stringify({ ok: true, key: params.key }));
+  process.exit(0);
+}
+
+if (method === 'sessions.send') {
+  process.stdout.write(JSON.stringify({ messageSeq: 7 }));
+  process.exit(0);
+}
+
+if (method === 'sessions.get') {
+  const response = nextSessionGetResponse();
+  process.stdout.write(
+    JSON.stringify({
+      messages: response.messages.map((message) => ({
+        role: message.role,
+        __openclaw: { seq: message.seq },
+        content: message.content,
+      })),
+    }),
+  );
+  process.exit(0);
+}
+
+process.stderr.write('unexpected method: ' + method);
+process.exit(1);
+`,
+    'utf8',
+  );
+  chmodSync(binaryPath, 0o755);
+
+  return { tempDir, binaryPath };
+}
 
 test('buildLatchTaskRequest accepts the canonical request fixture', () => {
   const request = buildLatchTaskRequest(validRequestFixture);
@@ -104,20 +186,69 @@ test('validateLatchAgentResponseForRequest rejects mismatched application ids', 
   );
 });
 
-test('requestApplicationWorkspacePreparation fails closed until the real OpenClaw bridge exists', async () => {
-  await assert.rejects(
-    () =>
-      requestApplicationWorkspacePreparation({
-        taskId: 'latch-task-123',
-        taskRequest: validRequestFixture,
-      }),
-    (error: unknown) => {
-      assert.ok(error instanceof LatchAgentError);
-      assert.equal(error.code, 'latch_agent_not_implemented');
-      assert.match(error.message, /No local fallback is allowed/i);
-      assert.equal(error.details?.taskId, 'latch-task-123');
-      assert.equal(error.details?.agentId, 'application-ops');
-      return true;
-    },
-  );
+test('requestApplicationWorkspacePreparation returns the typed agent response through the gateway bridge', async () => {
+  const { tempDir, binaryPath } = writeOpenClawStub(validResponseFixture);
+  const previousOpenClawBin = process.env.OPENCLAW_BIN;
+  process.env.OPENCLAW_BIN = binaryPath;
+
+  try {
+    const response = await requestApplicationWorkspacePreparation({
+      taskId: 'latch-task-123',
+      taskRequest: validRequestFixture,
+      timeoutSeconds: 1,
+    });
+
+    assert.equal(response.applicationId, 'app_01HXYZLATCH');
+    assert.equal(response.status, 'completed');
+    assert.equal(response.selectedResumeVersionId, 'resume_tailored_2026_04_07');
+    assert.equal(response.browserAutomation.attempted, false);
+  } finally {
+    if (previousOpenClawBin === undefined) {
+      delete process.env.OPENCLAW_BIN;
+    } else {
+      process.env.OPENCLAW_BIN = previousOpenClawBin;
+    }
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('requestApplicationWorkspacePreparation ignores assistant tool-only frames until a text reply arrives', async () => {
+  const { tempDir, binaryPath } = writeOpenClawStub(validResponseFixture, {
+    sessionGetResponses: [
+      {
+        messages: [
+          {
+            role: 'assistant',
+            seq: 8,
+            content: [{ type: 'tool_call' }],
+          },
+          {
+            role: 'assistant',
+            seq: 9,
+            content: [{ type: 'text', text: JSON.stringify(validResponseFixture) }],
+          },
+        ],
+      },
+    ],
+  });
+  const previousOpenClawBin = process.env.OPENCLAW_BIN;
+  process.env.OPENCLAW_BIN = binaryPath;
+
+  try {
+    const response = await requestApplicationWorkspacePreparation({
+      taskId: 'latch-task-124',
+      taskRequest: validRequestFixture,
+      timeoutSeconds: 1,
+    });
+
+    assert.equal(response.applicationId, 'app_01HXYZLATCH');
+    assert.equal(response.status, 'completed');
+  } finally {
+    if (previousOpenClawBin === undefined) {
+      delete process.env.OPENCLAW_BIN;
+    } else {
+      process.env.OPENCLAW_BIN = previousOpenClawBin;
+    }
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
