@@ -62,7 +62,11 @@ async function markSubmitReviewPacketDirty(applicationId: string, actorLabel: st
     },
   });
 
-  if (!application || application.status !== ApplicationStatus.submit_review || !application.submitReviewCapturedAt) {
+  if (
+    !application ||
+    !application.submitReviewCapturedAt ||
+    (application.status !== ApplicationStatus.submit_review && application.status !== ApplicationStatus.applying)
+  ) {
     return false;
   }
 
@@ -595,7 +599,7 @@ async function transitionApplicationStatus(
     eventType: string;
     payloadJson?: JsonLike;
     submittedAt?: Date | null;
-    portalSessionStatus?: 'ready_for_review' | 'submitted';
+    portalSessionStatus?: 'in_progress' | 'ready_for_review' | 'submitted';
     submissionNote?: string | null;
     externalApplicationId?: string | null;
     submittedPortalUrl?: string | null;
@@ -678,6 +682,11 @@ async function transitionApplicationStatus(
   });
 
   await syncApplicationReadiness(applicationId);
+
+  if (targetStatus === ApplicationStatus.applying && application.submitReviewCapturedAt) {
+    await markSubmitReviewPacketDirty(applicationId, options.actorLabel, 'returned_to_applying');
+  }
+
   revalidatePath(`/applications/${applicationId}`);
   revalidatePath('/applying');
   revalidatePath('/submit-review');
@@ -717,6 +726,7 @@ export async function moveApplicationBackToApplying(formData: FormData) {
     actorLabel: session.email,
     eventType: 'application.returned_to_applying',
     payloadJson: { source: 'submit_review' },
+    portalSessionStatus: 'in_progress',
   });
 }
 
