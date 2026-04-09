@@ -50,6 +50,55 @@ async function syncApplicationReadiness(applicationId: string) {
   return readiness;
 }
 
+async function ensureSessionUser(email: string) {
+  return prisma.user.upsert({
+    where: { email: email.toLowerCase() },
+    update: {
+      lastLoginAt: new Date(),
+    },
+    create: {
+      email: email.toLowerCase(),
+      role: 'owner',
+      lastLoginAt: new Date(),
+    },
+  });
+}
+
+function parseAnswerValueInput(formData: FormData) {
+  const valueJson = String(formData.get('valueJson') ?? '').trim();
+  if (valueJson) {
+    try {
+      return JSON.parse(valueJson);
+    } catch {
+      // fall through to string value
+    }
+  }
+
+  return String(formData.get('value') ?? '').trim();
+}
+
+function parseConfidence(raw: FormDataEntryValue | null) {
+  const value = String(raw ?? '').trim();
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function answerValueFromJson(value: unknown): { value: unknown; required: boolean } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { value, required: false };
+  }
+
+  const record = value as Record<string, unknown>;
+  return {
+    value: record.value ?? null,
+    required: Boolean(record.required),
+  };
+}
+
 export async function saveApplicationAnswer(formData: FormData) {
   const applicationId = String(formData.get('applicationId') ?? '');
   const fieldKey = String(formData.get('fieldKey') ?? '').trim();
@@ -97,6 +146,226 @@ export async function saveApplicationAnswer(formData: FormData) {
       actorLabel: 'latch',
       payloadJson: asJson({ fieldKey, fieldLabel, reviewState, required, sourceType }),
     },
+  });
+
+  await syncApplicationReadiness(applicationId);
+  revalidatePath(`/applications/${applicationId}`);
+  revalidatePath('/applying');
+}
+
+export async function saveProfileAnswer(formData: FormData) {
+  const session = await requireSession();
+  const applicationId = String(formData.get('applicationId') ?? '').trim();
+  const fieldKey = String(formData.get('fieldKey') ?? '').trim();
+  const fieldLabel = String(formData.get('fieldLabel') ?? '').trim();
+  const fieldGroup = String(formData.get('fieldGroup') ?? '').trim();
+  const sourceType = String(formData.get('sourceType') ?? 'manual') as 'manual' | 'agent' | 'resume' | 'derived';
+  const reviewState = String(formData.get('reviewState') ?? 'needs_review') as 'accepted' | 'needs_review' | 'blocked';
+  const confidence = parseConfidence(formData.get('confidence'));
+  const notes = String(formData.get('notes') ?? '').trim();
+  const value = parseAnswerValueInput(formData);
+
+  if (!fieldKey || !fieldLabel) {
+    throw new Error('fieldKey and fieldLabel are required');
+  }
+
+  const user = await ensureSessionUser(session.email);
+  const profileAnswer = await prisma.profileAnswer.upsert({
+    where: {
+      ownerUserId_fieldKey: {
+        ownerUserId: user.id,
+        fieldKey,
+      },
+    },
+    update: {
+      fieldLabel,
+      fieldGroup: fieldGroup || null,
+      answerJson: asJson(JSON.parse(JSON.stringify({ value })) as Prisma.InputJsonValue),
+      sourceType,
+      confidence,
+      reviewState,
+      notes: notes || null,
+      isArchived: false,
+    },
+    create: {
+      ownerUserId: user.id,
+      fieldKey,
+      fieldLabel,
+      fieldGroup: fieldGroup || null,
+      answerJson: asJson(JSON.parse(JSON.stringify({ value })) as Prisma.InputJsonValue),
+      sourceType,
+      confidence,
+      reviewState,
+      notes: notes || null,
+    },
+  });
+
+  await prisma.auditEvent.create({
+    data: {
+      entityType: 'profile_answer',
+      entityId: profileAnswer.id,
+      eventType: 'profile_answer.upserted',
+      actorType: 'user',
+      actorLabel: session.email,
+      payloadJson: asJson({
+        fieldKey,
+        fieldLabel,
+        fieldGroup: fieldGroup || null,
+        sourceType,
+        reviewState,
+      }),
+    },
+  });
+
+  if (applicationId) {
+    revalidatePath(`/applications/${applicationId}`);
+  }
+  revalidatePath('/applying');
+}
+
+export async function archiveProfileAnswer(formData: FormData) {
+  const session = await requireSession();
+  const applicationId = String(formData.get('applicationId') ?? '').trim();
+  const profileAnswerId = String(formData.get('profileAnswerId') ?? '').trim();
+
+  if (!profileAnswerId) {
+    throw new Error('profileAnswerId is required');
+  }
+
+  const user = await ensureSessionUser(session.email);
+  const profileAnswer = await prisma.profileAnswer.findFirst({
+    where: {
+      id: profileAnswerId,
+      ownerUserId: user.id,
+    },
+  });
+
+  if (!profileAnswer) {
+    throw new Error('Profile answer not found');
+  }
+
+  await prisma.profileAnswer.update({
+    where: { id: profileAnswer.id },
+    data: { isArchived: true },
+  });
+
+  await prisma.auditEvent.create({
+    data: {
+      entityType: 'profile_answer',
+      entityId: profileAnswer.id,
+      eventType: 'profile_answer.archived',
+      actorType: 'user',
+      actorLabel: session.email,
+      payloadJson: asJson({ fieldKey: profileAnswer.fieldKey }),
+    },
+  });
+
+  if (applicationId) {
+    revalidatePath(`/applications/${applicationId}`);
+  }
+  revalidatePath('/applying');
+}
+
+export async function applyProfileAnswerToApplication(formData: FormData) {
+  const session = await requireSession();
+  const applicationId = String(formData.get('applicationId') ?? '').trim();
+  const profileAnswerId = String(formData.get('profileAnswerId') ?? '').trim();
+
+  if (!applicationId || !profileAnswerId) {
+    throw new Error('applicationId and profileAnswerId are required');
+  }
+
+  const user = await ensureSessionUser(session.email);
+  const profileAnswer = await prisma.profileAnswer.findFirst({
+    where: {
+      id: profileAnswerId,
+      ownerUserId: user.id,
+      isArchived: false,
+    },
+  });
+
+  if (!profileAnswer) {
+    throw new Error('Profile answer not found');
+  }
+
+  const existingAnswer = await prisma.applicationAnswer.findUnique({
+    where: {
+      applicationId_fieldKey: {
+        applicationId,
+        fieldKey: profileAnswer.fieldKey,
+      },
+    },
+  });
+
+  const existingAnswerValue = answerValueFromJson(existingAnswer?.answerJson);
+  const profileValue = answerValueFromJson(profileAnswer.answerJson).value;
+
+  await prisma.applicationAnswer.upsert({
+    where: {
+      applicationId_fieldKey: {
+        applicationId,
+        fieldKey: profileAnswer.fieldKey,
+      },
+    },
+    update: {
+      fieldLabel: profileAnswer.fieldLabel,
+      fieldGroup: profileAnswer.fieldGroup,
+      answerJson: asJson(
+        JSON.parse(
+          JSON.stringify({
+            value: profileValue,
+            required: existingAnswerValue.required,
+          }),
+        ) as Prisma.InputJsonValue,
+      ),
+      sourceType: profileAnswer.sourceType,
+      confidence: profileAnswer.confidence,
+      reviewState: profileAnswer.reviewState,
+      profileAnswerId: profileAnswer.id,
+    },
+    create: {
+      applicationId,
+      fieldKey: profileAnswer.fieldKey,
+      fieldLabel: profileAnswer.fieldLabel,
+      fieldGroup: profileAnswer.fieldGroup,
+      answerJson: asJson(
+        JSON.parse(
+          JSON.stringify({
+            value: profileValue,
+            required: false,
+          }),
+        ) as Prisma.InputJsonValue,
+      ),
+      sourceType: profileAnswer.sourceType,
+      confidence: profileAnswer.confidence,
+      reviewState: profileAnswer.reviewState,
+      profileAnswerId: profileAnswer.id,
+    },
+  });
+
+  await prisma.auditEvent.createMany({
+    data: [
+      {
+        entityType: 'profile_answer',
+        entityId: profileAnswer.id,
+        eventType: 'profile_answer.applied_to_application',
+        actorType: 'user',
+        actorLabel: session.email,
+        payloadJson: asJson({ applicationId, fieldKey: profileAnswer.fieldKey }),
+      },
+      {
+        entityType: 'application',
+        entityId: applicationId,
+        eventType: 'application.answer_seeded_from_profile',
+        actorType: 'user',
+        actorLabel: session.email,
+        payloadJson: asJson({
+          profileAnswerId: profileAnswer.id,
+          fieldKey: profileAnswer.fieldKey,
+          sourceType: profileAnswer.sourceType,
+        }),
+      },
+    ],
   });
 
   await syncApplicationReadiness(applicationId);

@@ -156,11 +156,12 @@ enum PostingCheckStatus {
 }
 
 model User {
-  id          String    @id @default(cuid())
-  email       String    @unique
-  role        String    @default("owner")
-  createdAt   DateTime  @default(now())
-  lastLoginAt DateTime?
+  id             String          @id @default(cuid())
+  email          String          @unique
+  role           String          @default("owner")
+  createdAt      DateTime        @default(now())
+  lastLoginAt    DateTime?
+  profileAnswers ProfileAnswer[]
 }
 
 model Company {
@@ -473,19 +474,43 @@ model LatchWorkerHeartbeat {
 }
 
 model ApplicationAnswer {
-  id            String            @id @default(cuid())
-  applicationId String
-  application   Application       @relation(fields: [applicationId], references: [id], onDelete: Cascade)
-  fieldKey      String
-  fieldLabel    String
-  fieldGroup    String?
-  answerJson    Json?
-  sourceType    AnswerSourceType  @default(agent)
-  confidence    Float?
-  reviewState   AnswerReviewState @default(needs_review)
-  updatedAt     DateTime          @updatedAt
+  id              String            @id @default(cuid())
+  applicationId   String
+  application     Application       @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  fieldKey        String
+  fieldLabel      String
+  fieldGroup      String?
+  answerJson      Json?
+  sourceType      AnswerSourceType  @default(agent)
+  confidence      Float?
+  reviewState     AnswerReviewState @default(needs_review)
+  profileAnswerId String?
+  profileAnswer   ProfileAnswer?    @relation(fields: [profileAnswerId], references: [id], onDelete: SetNull)
+  updatedAt       DateTime          @updatedAt
 
   @@unique([applicationId, fieldKey])
+  @@index([profileAnswerId])
+}
+
+model ProfileAnswer {
+  id                 String              @id @default(cuid())
+  ownerUserId        String
+  ownerUser          User                @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  fieldKey           String
+  fieldLabel         String
+  fieldGroup         String?
+  answerJson         Json?
+  sourceType         AnswerSourceType    @default(manual)
+  confidence         Float?
+  reviewState        AnswerReviewState   @default(needs_review)
+  notes              String?
+  isArchived         Boolean             @default(false)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  applicationAnswers ApplicationAnswer[]
+
+  @@unique([ownerUserId, fieldKey])
+  @@index([ownerUserId, isArchived])
 }
 
 model ApplicationAttachment {

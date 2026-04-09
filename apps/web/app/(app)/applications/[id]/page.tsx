@@ -2,9 +2,17 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { AutoRefresh } from '../../../../components/auto-refresh';
-import { getApplicationDetail } from '../../../../lib/queries';
+import { requireSession } from '../../../../lib/auth';
+import { getApplicationDetail, getProfileAnswerLibrary } from '../../../../lib/queries';
 
-import { addApplicationAttachment, saveApplicationAnswer, savePortalSession } from './actions';
+import {
+  addApplicationAttachment,
+  applyProfileAnswerToApplication,
+  archiveProfileAnswer,
+  saveApplicationAnswer,
+  savePortalSession,
+  saveProfileAnswer,
+} from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -63,9 +71,21 @@ function getHeartbeatTone(freshness: string) {
   }
 }
 
+function getReviewTone(reviewState: string) {
+  switch (reviewState) {
+    case 'accepted':
+      return 'ok';
+    case 'blocked':
+      return 'danger';
+    default:
+      return 'warning';
+  }
+}
+
 export default async function ApplicationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const application = await getApplicationDetail(id);
+  const session = await requireSession();
+  const [application, profileAnswers] = await Promise.all([getApplicationDetail(id), getProfileAnswerLibrary(session.email)]);
 
   if (!application) {
     notFound();
@@ -274,19 +294,29 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
                 <li key={answer.id} className="info-block">
                   <div className="split-line">
                     <strong>{answer.fieldLabel}</strong>
-                    <span className={`status-pill subtle ${answer.reviewState === 'blocked' ? 'danger' : answer.reviewState === 'accepted' ? 'ok' : 'warning'}`}>
-                      {answer.reviewState}
-                    </span>
+                    <span className={`status-pill subtle ${getReviewTone(answer.reviewState)}`}>{answer.reviewState}</span>
                   </div>
-                  <div className="muted small">
-                    {answer.fieldGroup ?? 'ungrouped'} · {answer.sourceType} · confidence{' '}
-                    {answer.confidence == null ? 'n/a' : answer.confidence}
-                    {answer.required ? ' · required' : ''}
-                  </div>
+                  <div className="muted small">{answer.fieldKey}{answer.fieldGroup ? ` · ${answer.fieldGroup}` : ''}</div>
+                  <div className="muted small">Source: {answer.sourceType}{answer.required ? ' · required' : ''}</div>
+                  {typeof answer.confidence === 'number' ? (
+                    <div className="muted small">Confidence {answer.confidence.toFixed(2)}</div>
+                  ) : null}
                   <div>{renderValue(answer.value)}</div>
+                  <form action={saveProfileAnswer} className="button-row">
+                    <input type="hidden" name="applicationId" value={application.id} />
+                    <input type="hidden" name="fieldKey" value={answer.fieldKey} />
+                    <input type="hidden" name="fieldLabel" value={answer.fieldLabel} />
+                    <input type="hidden" name="fieldGroup" value={answer.fieldGroup ?? ''} />
+                    <input type="hidden" name="valueJson" value={JSON.stringify(answer.value ?? null)} />
+                    <input type="hidden" name="sourceType" value={answer.sourceType} />
+                    <input type="hidden" name="reviewState" value={answer.reviewState} />
+                    {typeof answer.confidence === 'number' ? (
+                      <input type="hidden" name="confidence" value={String(answer.confidence)} />
+                    ) : null}
+                    <button type="submit" className="button-link secondary">Save as reusable answer</button>
+                  </form>
                 </li>
-              ))
-            )}
+              ))            )}
           </ul>
 
           <form action={saveApplicationAnswer} className="stack-form form-panel">
@@ -340,6 +370,97 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
               <input name="confidence" type="number" min="0" max="1" step="0.01" placeholder="0.85" />
             </label>
             <button type="submit">Save answer</button>
+          </form>
+        </div>
+
+        <div className="panel">
+          <p className="eyebrow">Reusable answer library</p>
+          <h2>Profile defaults</h2>
+          <p className="muted">Save stable answers once, then intentionally copy them into this application.</p>
+          <ul className="simple-list">
+            {profileAnswers.length === 0 ? (
+              <li className="muted">No reusable answers saved yet.</li>
+            ) : (
+              profileAnswers.map((answer) => (
+                <li key={answer.id} className="info-block">
+                  <div className="split-line">
+                    <strong>{answer.fieldLabel}</strong>
+                    <span className={`status-pill subtle ${getReviewTone(answer.reviewState)}`}>{answer.reviewState}</span>
+                  </div>
+                  <div className="muted small">{answer.fieldKey}{answer.fieldGroup ? ` · ${answer.fieldGroup}` : ''}</div>
+                  <div className="muted small">Source: {answer.sourceType}</div>
+                  {typeof answer.confidence === 'number' ? (
+                    <div className="muted small">Confidence {answer.confidence.toFixed(2)}</div>
+                  ) : null}
+                  <div>{renderValue(answer.value)}</div>
+                  {answer.notes ? <div className="muted small">Notes: {answer.notes}</div> : null}
+                  <div className="button-row">
+                    <form action={applyProfileAnswerToApplication}>
+                      <input type="hidden" name="applicationId" value={application.id} />
+                      <input type="hidden" name="profileAnswerId" value={answer.id} />
+                      <button type="submit" className="button-link secondary">Use for this application</button>
+                    </form>
+                    <form action={archiveProfileAnswer}>
+                      <input type="hidden" name="applicationId" value={application.id} />
+                      <input type="hidden" name="profileAnswerId" value={answer.id} />
+                      <button type="submit" className="button-link secondary">Archive</button>
+                    </form>
+                  </div>
+                </li>
+              ))
+            )}
+          </ul>
+          <form action={saveProfileAnswer} className="stack-form form-panel">
+            <input type="hidden" name="applicationId" value={application.id} />
+            <h3>Save reusable answer</h3>
+            <div className="grid-two compact-grid">
+              <label className="stack-field">
+                <span>Field key</span>
+                <input name="fieldKey" placeholder="linkedin_url" required />
+              </label>
+              <label className="stack-field">
+                <span>Field label</span>
+                <input name="fieldLabel" placeholder="LinkedIn profile URL" required />
+              </label>
+            </div>
+            <div className="grid-two compact-grid">
+              <label className="stack-field">
+                <span>Field group</span>
+                <input name="fieldGroup" placeholder="links" />
+              </label>
+              <label className="stack-field">
+                <span>Source type</span>
+                <select name="sourceType" defaultValue="manual">
+                  <option value="manual">manual</option>
+                  <option value="agent">agent</option>
+                  <option value="resume">resume</option>
+                  <option value="derived">derived</option>
+                </select>
+              </label>
+            </div>
+            <label className="stack-field">
+              <span>Value</span>
+              <input name="value" placeholder="https://linkedin.com/in/you" />
+            </label>
+            <div className="grid-two compact-grid">
+              <label className="stack-field">
+                <span>Review state</span>
+                <select name="reviewState" defaultValue="accepted">
+                  <option value="accepted">accepted</option>
+                  <option value="needs_review">needs_review</option>
+                  <option value="blocked">blocked</option>
+                </select>
+              </label>
+              <label className="stack-field">
+                <span>Confidence (0-1)</span>
+                <input name="confidence" type="number" min="0" max="1" step="0.01" placeholder="0.99" />
+              </label>
+            </div>
+            <label className="stack-field">
+              <span>Notes</span>
+              <input name="notes" placeholder="Reusable default for application forms" />
+            </label>
+            <button type="submit">Save reusable answer</button>
           </form>
         </div>
 

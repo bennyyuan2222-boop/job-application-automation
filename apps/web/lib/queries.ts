@@ -96,6 +96,19 @@ function answerValueFromJson(value: unknown): { value: unknown; required: boolea
   };
 }
 
+export type ProfileAnswerLibraryItem = {
+  id: string;
+  fieldKey: string;
+  fieldLabel: string;
+  fieldGroup: string | null;
+  value: unknown;
+  sourceType: string;
+  confidence: number | null;
+  reviewState: string;
+  notes: string | null;
+  updatedAt: string;
+};
+
 function asFitAssessment(value: unknown) {
   const parsed = tailoringFitAssessmentSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
@@ -383,6 +396,29 @@ function isMissingLatchInfrastructureError(error: unknown) {
   return false;
 }
 
+function isMissingProfileAnswerInfrastructureError(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+    return false;
+  }
+
+  if (error.code === 'P2021') {
+    const table = typeof error.meta?.table === 'string' ? error.meta.table : '';
+    if (table.includes('ProfileAnswer')) {
+      return true;
+    }
+  }
+
+  if (error.code === 'P2022') {
+    const column = typeof error.meta?.column === 'string' ? error.meta.column : '';
+    const message = error.message ?? '';
+    if (column.includes('ProfileAnswer') || message.includes('ProfileAnswer')) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 async function getLegacyOperationalApplicationQueue(
   statuses: Array<'applying' | 'submit_review' | 'submitted'>,
 ): Promise<ApplyingQueueItem[]> {
@@ -598,6 +634,51 @@ export async function getLatestLatchWorkerHeartbeatSummary(): Promise<LatchWorke
   } catch (error) {
     if (isMissingLatchInfrastructureError(error)) {
       return null;
+    }
+
+    throw error;
+  }
+}
+
+export async function getProfileAnswerLibrary(email: string): Promise<ProfileAnswerLibraryItem[]> {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) {
+    return [];
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true },
+    });
+
+    if (!user) {
+      return [];
+    }
+
+    const answers = await prisma.profileAnswer.findMany({
+      where: {
+        ownerUserId: user.id,
+        isArchived: false,
+      },
+      orderBy: [{ fieldLabel: 'asc' }, { updatedAt: 'desc' }],
+    });
+
+    return answers.map((answer) => ({
+      id: answer.id,
+      fieldKey: answer.fieldKey,
+      fieldLabel: answer.fieldLabel,
+      fieldGroup: answer.fieldGroup,
+      value: answerValueFromJson(answer.answerJson).value,
+      sourceType: answer.sourceType,
+      confidence: answer.confidence,
+      reviewState: answer.reviewState,
+      notes: answer.notes,
+      updatedAt: answer.updatedAt.toISOString(),
+    }));
+  } catch (error) {
+    if (isMissingProfileAnswerInfrastructureError(error)) {
+      return [];
     }
 
     throw error;
