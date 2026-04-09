@@ -344,6 +344,15 @@ model Application {
   lowConfidenceCount      Int                     @default(0)
   pausedReason            String?
   submittedAt             DateTime?
+  submitReviewPacketJson  Json?
+  submitReviewPacketHash  String?
+  submitReviewCapturedAt  DateTime?
+  submitReviewDirtyAt     DateTime?
+  submitReviewDirtyReason String?
+  submissionNote          String?
+  externalApplicationId   String?
+  submittedPortalUrl      String?
+  submittedPortalDomain   String?
   needleSessionKey        String?
   needleSessionUpdatedAt  DateTime?
   createdAt               DateTime                @default(now())

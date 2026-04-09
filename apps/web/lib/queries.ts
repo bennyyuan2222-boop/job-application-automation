@@ -36,6 +36,8 @@ import {
 import { evaluateApplicationReadiness } from '@job-ops/readiness';
 import { coerceResumeDocument } from '@job-ops/tailoring';
 
+import { summarizeSubmitReviewPacket } from './submit-review';
+
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
@@ -359,6 +361,57 @@ function getWorkspacePrepState(args: {
   return 'not_started';
 }
 
+function mapSubmitReviewPacketSummary(application: {
+  submitReviewPacketJson: unknown;
+  submitReviewPacketHash: string | null;
+  submitReviewCapturedAt: Date | null;
+  submitReviewDirtyAt: Date | null;
+  submitReviewDirtyReason: string | null;
+}) {
+  if (!application.submitReviewCapturedAt || !application.submitReviewPacketHash) {
+    return null;
+  }
+
+  const counts = summarizeSubmitReviewPacket(application.submitReviewPacketJson);
+
+  return {
+    capturedAt: application.submitReviewCapturedAt.toISOString(),
+    hash: application.submitReviewPacketHash,
+    isDirty: Boolean(application.submitReviewDirtyAt),
+    dirtyAt: application.submitReviewDirtyAt ? application.submitReviewDirtyAt.toISOString() : null,
+    dirtyReason: application.submitReviewDirtyReason,
+    answerCount: counts?.answerCount ?? 0,
+    attachmentCount: counts?.attachmentCount ?? 0,
+    portalSessionCount: counts?.portalSessionCount ?? 0,
+  };
+}
+
+function mapSubmissionRecordSummary(application: {
+  submittedAt: Date | null;
+  submissionNote: string | null;
+  externalApplicationId: string | null;
+  submittedPortalUrl: string | null;
+  submittedPortalDomain: string | null;
+}) {
+  if (
+    !application.submittedAt &&
+    !application.submissionNote &&
+    !application.externalApplicationId &&
+    !application.submittedPortalUrl &&
+    !application.submittedPortalDomain
+  ) {
+    return null;
+  }
+
+  return {
+    submittedAt: application.submittedAt ? application.submittedAt.toISOString() : null,
+    submissionNote: application.submissionNote,
+    externalApplicationId: application.externalApplicationId,
+    submittedPortalUrl: application.submittedPortalUrl,
+    submittedPortalDomain: application.submittedPortalDomain,
+  };
+}
+
 function parseInteger(value: string | undefined, fallback: number) {
   if (!value) {
     return fallback;
@@ -466,6 +519,8 @@ async function getLegacyOperationalApplicationQueue(
       activeLatchTask: null,
       latestLatchTask: null,
       latchWorker: null,
+      submitReviewPacket: mapSubmitReviewPacketSummary(application),
+      submissionRecord: mapSubmissionRecordSummary(application),
       selectedTailoredResumeTitle: application.tailoredResumeVersion?.title ?? null,
       jobTitle: application.job.title,
       companyName: application.job.company.name,
@@ -591,6 +646,8 @@ async function getOperationalApplicationQueue(
           latestHeartbeat,
           workerLabel: activeLatchTask?.workerLabel ?? latestLatchTask?.workerLabel,
         }),
+        submitReviewPacket: mapSubmitReviewPacketSummary(application),
+        submissionRecord: mapSubmissionRecordSummary(application),
         selectedTailoredResumeTitle: application.tailoredResumeVersion?.title ?? null,
         jobTitle: application.job.title,
         companyName: application.job.company.name,
@@ -745,6 +802,8 @@ async function getLegacyApplicationDetail(applicationId: string): Promise<Applic
     activeLatchTask: null,
     latestLatchTask: null,
     latchWorker: null,
+    submitReviewPacket: mapSubmitReviewPacketSummary(application),
+    submissionRecord: mapSubmissionRecordSummary(application),
     readiness,
     job: {
       id: application.job.id,
@@ -908,6 +967,8 @@ export async function getApplicationDetail(applicationId: string): Promise<Appli
         latestHeartbeat,
         workerLabel: activeLatchTask?.workerLabel ?? latestLatchTask?.workerLabel,
       }),
+      submitReviewPacket: mapSubmitReviewPacketSummary(application),
+      submissionRecord: mapSubmissionRecordSummary(application),
       readiness,
       job: {
         id: application.job.id,

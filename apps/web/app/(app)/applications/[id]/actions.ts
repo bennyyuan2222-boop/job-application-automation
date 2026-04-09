@@ -11,6 +11,7 @@ import {
 } from '@job-ops/domain';
 
 import { requireSession } from '../../../../lib/auth';
+import { buildSubmitReviewPacketFields, summarizeSubmitReviewPacket } from '../../../../lib/submit-review';
 
 function asJson(value: Prisma.InputJsonValue | null | undefined) {
   return value ?? Prisma.JsonNull;
@@ -48,6 +49,108 @@ async function syncApplicationReadiness(applicationId: string) {
   });
 
   return readiness;
+}
+
+async function markSubmitReviewPacketDirty(applicationId: string, actorLabel: string, reason: string) {
+  const application = await prisma.application.findUnique({
+    where: { id: applicationId },
+    select: {
+      id: true,
+      status: true,
+      submitReviewCapturedAt: true,
+      submitReviewDirtyAt: true,
+    },
+  });
+
+  if (!application || application.status !== ApplicationStatus.submit_review || !application.submitReviewCapturedAt) {
+    return false;
+  }
+
+  if (application.submitReviewDirtyAt) {
+    return true;
+  }
+
+  await prisma.application.update({
+    where: { id: applicationId },
+    data: {
+      submitReviewDirtyAt: new Date(),
+      submitReviewDirtyReason: reason,
+    },
+  });
+
+  await prisma.auditEvent.create({
+    data: makeAuditEvent({
+      entityType: 'application',
+      entityId: applicationId,
+      eventType: 'application.submit_review_packet_marked_dirty',
+      actorType: 'user',
+      actorLabel,
+      payloadJson: { reason },
+    }),
+  });
+
+  return true;
+}
+
+async function freezeSubmitReviewPacket(tx: Prisma.TransactionClient, applicationId: string, actorLabel: string) {
+  const application = await tx.application.findUnique({
+    where: { id: applicationId },
+    include: {
+      job: {
+        include: {
+          company: true,
+        },
+      },
+      tailoredResumeVersion: true,
+      answers: {
+        orderBy: { fieldLabel: 'asc' },
+      },
+      attachments: {
+        orderBy: { createdAt: 'desc' },
+      },
+      portalSessions: {
+        orderBy: [{ lastSyncedAt: 'desc' }, { id: 'desc' }],
+      },
+    },
+  });
+
+  if (!application) {
+    throw new Error('Application not found');
+  }
+
+  const readiness = evaluateApplicationReadiness({
+    status: application.status,
+    tailoredResumeVersionId: application.tailoredResumeVersionId,
+    answers: application.answers,
+    attachments: application.attachments,
+    portalSessions: application.portalSessions,
+  });
+
+  if (!readiness.ready) {
+    throw new Error('Application must be fully ready before entering submit review');
+  }
+
+  const packetFields = buildSubmitReviewPacketFields(application, readiness);
+  const packetSummary = summarizeSubmitReviewPacket(packetFields.submitReviewPacketJson);
+
+  await tx.application.update({
+    where: { id: applicationId },
+    data: packetFields,
+  });
+
+  await tx.auditEvent.create({
+    data: makeAuditEvent({
+      entityType: 'application',
+      entityId: applicationId,
+      eventType: 'application.submit_review_packet_frozen',
+      actorType: 'user',
+      actorLabel,
+      payloadJson: {
+        submitReviewPacketHash: packetFields.submitReviewPacketHash,
+        ...packetSummary,
+      },
+    }),
+  });
 }
 
 async function ensureSessionUser(email: string) {
@@ -100,6 +203,7 @@ function answerValueFromJson(value: unknown): { value: unknown; required: boolea
 }
 
 export async function saveApplicationAnswer(formData: FormData) {
+  const session = await requireSession();
   const applicationId = String(formData.get('applicationId') ?? '');
   const fieldKey = String(formData.get('fieldKey') ?? '').trim();
   const fieldLabel = String(formData.get('fieldLabel') ?? '').trim();
@@ -149,8 +253,10 @@ export async function saveApplicationAnswer(formData: FormData) {
   });
 
   await syncApplicationReadiness(applicationId);
+  await markSubmitReviewPacketDirty(applicationId, session.email, 'application_answer_changed');
   revalidatePath(`/applications/${applicationId}`);
   revalidatePath('/applying');
+  revalidatePath('/submit-review');
 }
 
 export async function saveProfileAnswer(formData: FormData) {
@@ -369,11 +475,14 @@ export async function applyProfileAnswerToApplication(formData: FormData) {
   });
 
   await syncApplicationReadiness(applicationId);
+  await markSubmitReviewPacketDirty(applicationId, session.email, 'application_answer_seeded_from_profile');
   revalidatePath(`/applications/${applicationId}`);
   revalidatePath('/applying');
+  revalidatePath('/submit-review');
 }
 
 export async function addApplicationAttachment(formData: FormData) {
+  const session = await requireSession();
   const applicationId = String(formData.get('applicationId') ?? '');
   const attachmentType = String(formData.get('attachmentType') ?? 'resume') as 'resume' | 'other';
   const filename = String(formData.get('filename') ?? '').trim();
@@ -406,6 +515,7 @@ export async function addApplicationAttachment(formData: FormData) {
   });
 
   await syncApplicationReadiness(applicationId);
+  await markSubmitReviewPacketDirty(applicationId, session.email, 'application_attachment_changed');
   revalidatePath(`/applications/${applicationId}`);
   revalidatePath('/applying');
   revalidatePath('/submit-review');
@@ -469,9 +579,12 @@ export async function savePortalSession(formData: FormData) {
     ],
   });
 
+  const session = await requireSession();
   await syncApplicationReadiness(applicationId);
+  await markSubmitReviewPacketDirty(applicationId, session.email, 'portal_session_changed');
   revalidatePath(`/applications/${applicationId}`);
   revalidatePath('/applying');
+  revalidatePath('/submit-review');
 }
 
 async function transitionApplicationStatus(
@@ -483,6 +596,10 @@ async function transitionApplicationStatus(
     payloadJson?: JsonLike;
     submittedAt?: Date | null;
     portalSessionStatus?: 'ready_for_review' | 'submitted';
+    submissionNote?: string | null;
+    externalApplicationId?: string | null;
+    submittedPortalUrl?: string | null;
+    submittedPortalDomain?: string | null;
   },
 ) {
   const application = await prisma.application.findUnique({
@@ -501,17 +618,41 @@ async function transitionApplicationStatus(
 
   assertApplicationTransition(application.status as DomainApplicationStatus, targetStatus as DomainApplicationStatus);
 
+  if (targetStatus === ApplicationStatus.submitted) {
+    if (!application.submitReviewCapturedAt || !application.submitReviewPacketHash) {
+      throw new Error('Application must have a frozen submit review packet before submission is recorded');
+    }
+
+    if (application.submitReviewDirtyAt) {
+      throw new Error('Submit review packet is stale. Refresh review before marking submitted.');
+    }
+  }
+
   await prisma.$transaction(async (tx) => {
+    const latestPortalSession = application.portalSessions[0] ?? null;
+
     await tx.application.update({
       where: { id: applicationId },
       data: {
         status: targetStatus,
         submittedAt: options.submittedAt === undefined ? application.submittedAt : options.submittedAt,
         pausedReason: targetStatus === ApplicationStatus.submitted ? application.pausedReason : null,
+        ...(targetStatus === ApplicationStatus.submitted
+          ? {
+              submissionNote: options.submissionNote ?? null,
+              externalApplicationId: options.externalApplicationId ?? null,
+              submittedPortalUrl: options.submittedPortalUrl ?? application.portalUrl ?? latestPortalSession?.launchUrl ?? null,
+              submittedPortalDomain:
+                options.submittedPortalDomain ?? application.portalDomain ?? latestPortalSession?.providerDomain ?? null,
+            }
+          : {}),
       },
     });
 
-    const latestPortalSession = application.portalSessions[0] ?? null;
+    if (targetStatus === ApplicationStatus.submit_review) {
+      await freezeSubmitReviewPacket(tx, applicationId, options.actorLabel);
+    }
+
     if (latestPortalSession && options.portalSessionStatus) {
       await tx.portalSession.update({
         where: { id: latestPortalSession.id },
@@ -579,19 +720,75 @@ export async function moveApplicationBackToApplying(formData: FormData) {
   });
 }
 
-export async function markApplicationSubmitted(formData: FormData) {
+export async function refreshSubmitReviewPacket(formData: FormData) {
   const session = await requireSession();
-  const applicationId = String(formData.get('applicationId') ?? '');
+  const applicationId = String(formData.get('applicationId') ?? '').trim();
 
   if (!applicationId) {
     throw new Error('applicationId is required');
   }
 
+  const application = await prisma.application.findUnique({
+    where: { id: applicationId },
+    select: { status: true },
+  });
+
+  if (!application) {
+    throw new Error('Application not found');
+  }
+
+  if (application.status !== ApplicationStatus.submit_review) {
+    throw new Error('Submit review packet can only be refreshed while the application is in submit_review');
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await freezeSubmitReviewPacket(tx, applicationId, session.email);
+
+    await tx.auditEvent.create({
+      data: makeAuditEvent({
+        entityType: 'application',
+        entityId: applicationId,
+        eventType: 'application.submit_review_packet_refreshed',
+        actorType: 'user',
+        actorLabel: session.email,
+        payloadJson: { source: 'manual_refresh' },
+      }),
+    });
+  });
+
+  await syncApplicationReadiness(applicationId);
+  revalidatePath(`/applications/${applicationId}`);
+  revalidatePath('/submit-review');
+}
+
+export async function markApplicationSubmitted(formData: FormData) {
+  const session = await requireSession();
+  const applicationId = String(formData.get('applicationId') ?? '').trim();
+
+  if (!applicationId) {
+    throw new Error('applicationId is required');
+  }
+
+  const submissionNote = String(formData.get('submissionNote') ?? '').trim();
+  const externalApplicationId = String(formData.get('externalApplicationId') ?? '').trim();
+  const submittedPortalUrl = String(formData.get('submittedPortalUrl') ?? '').trim();
+  const submittedPortalDomain = String(formData.get('submittedPortalDomain') ?? '').trim();
+
   await transitionApplicationStatus(applicationId, ApplicationStatus.submitted, {
     actorLabel: session.email,
     eventType: 'application.submitted',
     submittedAt: new Date(),
-    payloadJson: { source: 'manual_confirmation' },
+    payloadJson: {
+      source: 'manual_confirmation',
+      submissionNote: submissionNote || null,
+      externalApplicationId: externalApplicationId || null,
+      submittedPortalUrl: submittedPortalUrl || null,
+      submittedPortalDomain: submittedPortalDomain || null,
+    },
+    submissionNote: submissionNote || null,
+    externalApplicationId: externalApplicationId || null,
+    submittedPortalUrl: submittedPortalUrl || null,
+    submittedPortalDomain: submittedPortalDomain || null,
     portalSessionStatus: 'submitted',
   });
 }

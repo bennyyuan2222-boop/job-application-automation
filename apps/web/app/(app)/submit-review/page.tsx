@@ -39,11 +39,24 @@ export default async function SubmitReviewPage() {
                     <div className={`status-pill ${application.status === 'submitted' ? 'ok' : application.hasHardBlockers ? 'danger' : 'warning'}`}>
                       {application.status === 'submitted' ? 'Submitted' : application.hasHardBlockers ? 'Blocked' : 'Needs final review'}
                     </div>
+                    {application.submitReviewPacket ? (
+                      <div className={`status-pill subtle ${application.submitReviewPacket.isDirty ? 'warning' : 'ok'}`}>
+                        {application.submitReviewPacket.isDirty ? 'Packet stale' : 'Packet current'}
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="muted small">
                     Tailored resume: {application.selectedTailoredResumeTitle ?? 'not selected'}
                   </div>
+                  {application.submitReviewPacket ? (
+                    <div className="muted small">
+                      Packet captured {new Date(application.submitReviewPacket.capturedAt).toLocaleString()} · {application.submitReviewPacket.answerCount} answers · {application.submitReviewPacket.attachmentCount} attachments
+                    </div>
+                  ) : null}
+                  {application.submissionRecord?.submittedAt ? (
+                    <div className="muted small">Recorded submitted {new Date(application.submissionRecord.submittedAt).toLocaleString()}</div>
+                  ) : null}
                 </article>
               </Link>
             ))}

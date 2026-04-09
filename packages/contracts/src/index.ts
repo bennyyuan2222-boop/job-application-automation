@@ -371,6 +371,25 @@ export const scoutJobDetailSchema = scoutQueueJobSchema.extend({
   sourceRecords: z.array(scoutJobSourceRecordSchema),
 });
 
+export const submitReviewPacketSummarySchema = z.object({
+  capturedAt: z.string(),
+  hash: z.string(),
+  isDirty: z.boolean(),
+  dirtyAt: z.string().nullable(),
+  dirtyReason: z.string().nullable(),
+  answerCount: z.number(),
+  attachmentCount: z.number(),
+  portalSessionCount: z.number(),
+});
+
+export const submissionRecordSummarySchema = z.object({
+  submittedAt: z.string().nullable(),
+  submissionNote: z.string().nullable(),
+  externalApplicationId: z.string().nullable(),
+  submittedPortalUrl: z.string().nullable(),
+  submittedPortalDomain: z.string().nullable(),
+});
+
 export const applicationDetailSchema = z.object({
   id: z.string(),
   status: z.string(),
@@ -381,6 +400,8 @@ export const applicationDetailSchema = z.object({
   activeLatchTask: latchTaskSummarySchema.nullable(),
   latestLatchTask: latchTaskSummarySchema.nullable(),
   latchWorker: latchWorkerHeartbeatSummarySchema.nullable(),
+  submitReviewPacket: submitReviewPacketSummarySchema.nullable(),
+  submissionRecord: submissionRecordSummarySchema.nullable(),
   readiness: readinessSummarySchema,
   job: z.object({
     id: z.string(),
@@ -409,6 +430,8 @@ export const applyingQueueItemSchema = z.object({
   activeLatchTask: latchTaskSummarySchema.nullable(),
   latestLatchTask: latchTaskSummarySchema.nullable(),
   latchWorker: latchWorkerHeartbeatSummarySchema.nullable(),
+  submitReviewPacket: submitReviewPacketSummarySchema.nullable(),
+  submissionRecord: submissionRecordSummarySchema.nullable(),
   selectedTailoredResumeTitle: z.string().nullable(),
   jobTitle: z.string(),
   companyName: z.string(),

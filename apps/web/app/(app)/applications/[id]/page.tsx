@@ -9,6 +9,10 @@ import {
   addApplicationAttachment,
   applyProfileAnswerToApplication,
   archiveProfileAnswer,
+  markApplicationSubmitted,
+  moveApplicationBackToApplying,
+  moveApplicationToSubmitReview,
+  refreshSubmitReviewPacket,
   saveApplicationAnswer,
   savePortalSession,
   saveProfileAnswer,
@@ -95,6 +99,8 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
   const answers = application.answers ?? [];
   const attachments = application.attachments ?? [];
   const portalSessions = application.portalSessions ?? [];
+  const submitReviewPacket = application.submitReviewPacket;
+  const submissionRecord = application.submissionRecord;
   const hasActiveLatchTask = Boolean(application.activeLatchTask);
   const latestVisibleLatchTask = application.activeLatchTask ?? application.latestLatchTask;
 
@@ -605,11 +611,50 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel stack-blocks">
+        <div>
+          <p className="eyebrow">Submit review packet</p>
+          <h2>Final review boundary</h2>
+        </div>
+
+        {submitReviewPacket ? (
+          <div className="info-block">
+            <div className="split-line">
+              <strong>{submitReviewPacket.isDirty ? 'Packet is stale' : 'Packet is current'}</strong>
+              <span className={`status-pill subtle ${submitReviewPacket.isDirty ? 'warning' : 'ok'}`}>
+                {submitReviewPacket.isDirty ? 'stale' : 'current'}
+              </span>
+            </div>
+            <div className="muted small">Captured {new Date(submitReviewPacket.capturedAt).toLocaleString()}</div>
+            <div className="muted small">Fingerprint {submitReviewPacket.hash.slice(0, 12)}…</div>
+            <div className="muted small">
+              {submitReviewPacket.answerCount} answers · {submitReviewPacket.attachmentCount} attachments · {submitReviewPacket.portalSessionCount} portal sessions
+            </div>
+            {submitReviewPacket.dirtyReason ? <div className="muted small">Dirty reason: {submitReviewPacket.dirtyReason}</div> : null}
+          </div>
+        ) : (
+          <div className="muted">No frozen review packet yet.</div>
+        )}
+
+        {submissionRecord ? (
+          <div className="info-block">
+            <div className="split-line">
+              <strong>Submission record</strong>
+              <span className={`status-pill subtle ${application.status === 'submitted' ? 'ok' : 'warning'}`}>
+                {application.status}
+              </span>
+            </div>
+            <div className="muted small">Submitted at: {submissionRecord.submittedAt ? new Date(submissionRecord.submittedAt).toLocaleString() : 'Not submitted yet'}</div>
+            {submissionRecord.externalApplicationId ? <div className="muted small">External application ID: {submissionRecord.externalApplicationId}</div> : null}
+            {submissionRecord.submissionNote ? <div className="muted small">Note: {submissionRecord.submissionNote}</div> : null}
+            {submissionRecord.submittedPortalUrl ? <div className="muted small">Submitted URL: {submissionRecord.submittedPortalUrl}</div> : null}
+          </div>
+        ) : null}
+
         <div className="button-row">
           {application.status === 'applying' ? (
-            <form method="get" action={`/api/actions/applications/${application.id}/status`}>
-              <input type="hidden" name="to" value="submit_review" />
+            <form action={moveApplicationToSubmitReview}>
+              <input type="hidden" name="applicationId" value={application.id} />
               <button type="submit" disabled={!readiness.ready}>
                 Move to submit review
               </button>
@@ -618,12 +663,14 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
 
           {application.status === 'submit_review' ? (
             <>
-              <form method="get" action={`/api/actions/applications/${application.id}/status`}>
-                <input type="hidden" name="to" value="submitted" />
-                <button type="submit">Mark submitted</button>
+              <form action={refreshSubmitReviewPacket}>
+                <input type="hidden" name="applicationId" value={application.id} />
+                <button type="submit" className="button-link secondary">
+                  Refresh review packet
+                </button>
               </form>
-              <form method="get" action={`/api/actions/applications/${application.id}/status`}>
-                <input type="hidden" name="to" value="applying" />
+              <form action={moveApplicationBackToApplying}>
+                <input type="hidden" name="applicationId" value={application.id} />
                 <button type="submit" className="button-link secondary">
                   Return to applying
                 </button>
@@ -631,9 +678,7 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
             </>
           ) : null}
 
-          {application.status === 'submitted' ? (
-            <div className="status-pill ok">Application marked submitted</div>
-          ) : null}
+          {application.status === 'submitted' ? <div className="status-pill ok">Application marked submitted</div> : null}
 
           <Link href={`/tailoring/${application.id}`} className="button-link secondary">
             Open tailoring workspace
@@ -645,6 +690,34 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
             Submit review queue
           </Link>
         </div>
+
+        {application.status === 'submit_review' ? (
+          <form action={markApplicationSubmitted} className="stack-form form-panel">
+            <input type="hidden" name="applicationId" value={application.id} />
+            <h3>Record manual submission</h3>
+            <div className="grid-two compact-grid">
+              <label className="stack-field">
+                <span>External application ID</span>
+                <input name="externalApplicationId" placeholder="Optional ATS confirmation ID" defaultValue={submissionRecord?.externalApplicationId ?? ''} />
+              </label>
+              <label className="stack-field">
+                <span>Submitted portal domain</span>
+                <input name="submittedPortalDomain" placeholder="boards.greenhouse.io" defaultValue={submissionRecord?.submittedPortalDomain ?? portalSessions[0]?.providerDomain ?? ''} />
+              </label>
+            </div>
+            <label className="stack-field">
+              <span>Submitted portal URL</span>
+              <input name="submittedPortalUrl" placeholder="https://boards.greenhouse.io/..." defaultValue={submissionRecord?.submittedPortalUrl ?? portalSessions[0]?.launchUrl ?? ''} />
+            </label>
+            <label className="stack-field">
+              <span>Confirmation note</span>
+              <textarea name="submissionNote" rows={3} placeholder="What you saw when you clicked submit" defaultValue={submissionRecord?.submissionNote ?? ''} />
+            </label>
+            <button type="submit" disabled={!submitReviewPacket || submitReviewPacket.isDirty}>
+              {!submitReviewPacket ? 'Freeze review packet first' : submitReviewPacket.isDirty ? 'Refresh review packet before submitting' : 'Mark submitted'}
+            </button>
+          </form>
+        ) : null}
       </section>
     </div>
   );
