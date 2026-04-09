@@ -6,6 +6,7 @@ import { ApplicationStatus, LatchTaskStatus, LatchTaskType } from '@job-ops/db';
 
 import {
   buildPrepareApplicationWorkspaceRequest,
+  buildResumeAttachmentPersistencePlan,
   enqueueLatchTaskFromNeedleApprovalWithTx,
 } from './queue';
 
@@ -112,6 +113,65 @@ test('enqueueLatchTaskFromNeedleApprovalWithTx reuses an active task when the wo
   assert.equal(result, activeTask);
   assert.equal(created, false);
   assert.equal(audited, false);
+});
+
+test('buildResumeAttachmentPersistencePlan falls back to canonical artifact route when rendered URLs are blank', () => {
+  const plan = buildResumeAttachmentPersistencePlan({
+    attachedResumeVersionId: 'resume-789',
+    existingAttachments: [],
+    resumeVersion: {
+      id: 'resume-789',
+      title: 'Acme AI — Analytics Associate Tailored Resume',
+      renderedPdfUrl: null,
+      renderedDocxUrl: null,
+    },
+  });
+
+  assert.deepEqual(plan, {
+    action: 'create',
+    reason: 'create_missing_attachment',
+    attachmentId: null,
+    data: {
+      resumeVersionId: 'resume-789',
+      fileUrl: '/api/resume-artifacts/resume-789',
+      filename: 'acme-ai-analytics-associate-tailored-resume.pdf',
+    },
+    fileUrl: '/api/resume-artifacts/resume-789',
+    filename: 'acme-ai-analytics-associate-tailored-resume.pdf',
+  });
+});
+
+test('buildResumeAttachmentPersistencePlan replaces a lone stale resume attachment with the selected tailored resume', () => {
+  const plan = buildResumeAttachmentPersistencePlan({
+    attachedResumeVersionId: 'resume-tailored',
+    existingAttachments: [
+      {
+        id: 'attachment-old',
+        resumeVersionId: 'resume-base',
+        fileUrl: 'seed://resume/base-analytics.pdf',
+        filename: 'benny-yuan-analytics-base.pdf',
+      },
+    ],
+    resumeVersion: {
+      id: 'resume-tailored',
+      title: 'Acme AI Tailored Resume',
+      renderedPdfUrl: null,
+      renderedDocxUrl: null,
+    },
+  });
+
+  assert.deepEqual(plan, {
+    action: 'update',
+    reason: 'replace_existing_attachment_with_selected_resume',
+    attachmentId: 'attachment-old',
+    data: {
+      resumeVersionId: 'resume-tailored',
+      fileUrl: '/api/resume-artifacts/resume-tailored',
+      filename: 'acme-ai-tailored-resume.pdf',
+    },
+    fileUrl: '/api/resume-artifacts/resume-tailored',
+    filename: 'acme-ai-tailored-resume.pdf',
+  });
 });
 
 test('enqueueLatchTaskFromNeedleApprovalWithTx fails a stale queued task and creates a replacement', async () => {

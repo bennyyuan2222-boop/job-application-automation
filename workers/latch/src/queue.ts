@@ -648,7 +648,10 @@ type ResumeAttachmentPersistencePlan =
     }
   | {
       action: 'update';
-      reason: 'normalize_existing_attachment' | 'bind_artifact_to_existing_attachment';
+      reason:
+        | 'normalize_existing_attachment'
+        | 'bind_artifact_to_existing_attachment'
+        | 'replace_existing_attachment_with_selected_resume';
       attachmentId: string;
       data: {
         resumeVersionId: string;
@@ -807,6 +810,21 @@ export function buildResumeAttachmentPersistencePlan(args: {
     };
   }
 
+  if (args.existingAttachments.length === 1) {
+    return {
+      action: 'update',
+      reason: 'replace_existing_attachment_with_selected_resume',
+      attachmentId: args.existingAttachments[0]!.id,
+      data: {
+        resumeVersionId: args.attachedResumeVersionId,
+        fileUrl: artifactUrl,
+        filename,
+      },
+      fileUrl: artifactUrl,
+      filename,
+    };
+  }
+
   return {
     action: 'create',
     reason: 'create_missing_attachment',
@@ -953,25 +971,47 @@ async function syncApplicationReadiness(tx: Prisma.TransactionClient, applicatio
   return readiness;
 }
 
+function buildResumeArtifactPath(resumeVersionId: string) {
+  return `/api/resume-artifacts/${resumeVersionId}`;
+}
+
 function pickResumeArtifactUrl(resumeVersion: {
+  id: string;
   renderedPdfUrl: string | null;
   renderedDocxUrl: string | null;
 }) {
-  return resumeVersion.renderedPdfUrl?.trim() || resumeVersion.renderedDocxUrl?.trim() || null;
+  return (
+    resumeVersion.renderedPdfUrl?.trim() ||
+    resumeVersion.renderedDocxUrl?.trim() ||
+    buildResumeArtifactPath(resumeVersion.id)
+  );
 }
 
 function deriveResumeAttachmentFilename(fileUrl: string, title: string) {
   const fallbackBase = slugifyFilename(title || 'resume');
   const fallbackExtension = fileUrl.toLowerCase().includes('.docx') ? '.docx' : '.pdf';
 
+  const normalizeCandidate = (candidate: string | undefined) => {
+    const trimmed = candidate?.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    if (trimmed.includes('.') && !trimmed.endsWith('.')) {
+      return trimmed;
+    }
+
+    return null;
+  };
+
   try {
     const parsed = new URL(fileUrl);
-    const lastSegment = parsed.pathname.split('/').filter(Boolean).at(-1)?.trim();
+    const lastSegment = normalizeCandidate(parsed.pathname.split('/').filter(Boolean).at(-1));
     if (lastSegment) {
       return lastSegment;
     }
   } catch {
-    const lastSegment = fileUrl.split('/').filter(Boolean).at(-1)?.trim();
+    const lastSegment = normalizeCandidate(fileUrl.split('/').filter(Boolean).at(-1));
     if (lastSegment) {
       return lastSegment;
     }
